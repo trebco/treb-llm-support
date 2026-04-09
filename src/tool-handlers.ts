@@ -1,0 +1,332 @@
+
+import type { ToolCallContent, ToolResultContent } from './chat-message';
+import type { ToolInputMap, ToolName } from './tool-schema';
+import { toolSchemas } from './tool-schema';
+import * as v from 'valibot';
+import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants } from './treb';
+import { SummarizeSpreadsheet } from './support-functions';
+import { parse as pj_parse } from 'partial-json';
+
+/** placeholder */
+export interface ExternalUI {
+
+}
+
+type ToolHandler = {
+  [K in ToolName]: (sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolInputMap[K]) => unknown|Promise<unknown>;
+};
+
+// --- Color conversion ---
+
+function parseColor(value: string): Color {
+  if (!value) return {};
+  if (value.startsWith('theme:')) {
+    const theme = value.slice(6);
+    const asNumber = Number(theme);
+    return { theme: Number.isNaN(asNumber) ? theme : asNumber } as Color;
+  }
+  return { text: value };
+}
+
+function serializeColor(color: Color | undefined): string | undefined {
+  if (!color) return undefined;
+  if ('text' in color) return color.text;
+  if ('theme' in color) return `theme:${color.theme}`;
+  return '';
+}
+
+// --- FontSize conversion ---
+
+function parseFontSize(value: string): FontSize {
+  const match = value.match(/^([0-9]*\.?[0-9]+)(em|%)$/);
+  if (!match) {
+    throw new Error(
+      `Invalid font size "${value}". Use relative units only: e.g. "1.2em", "120%".`,
+    );
+  }
+  return { value: parseFloat(match[1]), unit: match[2] as 'em' | '%' };
+}
+
+function serializeFontSize(fs: FontSize | undefined): string | undefined {
+  if (!fs) return undefined;
+  return `${fs.value}${fs.unit}`;
+}
+
+// --- Style conversion ---
+
+function serializeStyle(style: CellStyle): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (style.bold !== undefined) result.bold = style.bold;
+  if (style.italic !== undefined) result.italic = style.italic;
+  if (style.underline !== undefined) result.underline = style.underline;
+  if (style.strike !== undefined) result.strike = style.strike;
+  if (style.font_size !== undefined) result.font_size = serializeFontSize(style.font_size);
+  if (style.font_face !== undefined) result.font_face = style.font_face;
+  if (style.text !== undefined) result.text_color = serializeColor(style.text);
+  if (style.fill !== undefined) result.fill_color = serializeColor(style.fill);
+  if (style.horizontal_align !== undefined) result.horizontal_align = style.horizontal_align;
+  if (style.vertical_align !== undefined) result.vertical_align = style.vertical_align;
+  if (style.number_format !== undefined) result.number_format = style.number_format;
+  if (style.wrap !== undefined) result.wrap = style.wrap;
+  if (style.indent !== undefined) result.indent = style.indent;
+  if (style.locked !== undefined) result.locked = style.locked;
+  return result;
+}
+
+function inputToCellStyle(input: NonNullable<ToolInputMap['set_cells']['styles']>[string]): CellStyle {
+  const style: CellStyle = {};
+  if (input.bold !== undefined) style.bold = input.bold;
+  if (input.italic !== undefined) style.italic = input.italic;
+  if (input.underline !== undefined) style.underline = input.underline;
+  if (input.strike !== undefined) style.strike = input.strike;
+  if (input.font_size !== undefined) style.font_size = parseFontSize(input.font_size);
+  if (input.text_color !== undefined) style.text = parseColor(input.text_color);
+  if (input.fill_color !== undefined) style.fill = parseColor(input.fill_color);
+  if (input.horizontal_align !== undefined) style.horizontal_align = input.horizontal_align;
+  if (input.vertical_align !== undefined) style.vertical_align = input.vertical_align;
+  if (input.number_format !== undefined) style.number_format = input.number_format;
+  if (input.wrap !== undefined) style.wrap = input.wrap;
+  if (input.indent !== undefined) style.indent = input.indent;
+  if (input.locked !== undefined) style.locked = input.locked;
+  return style;
+}
+
+/** Convert a column label (e.g. "A"→0, "B"→1, "AA"→26) to a 0-based index. */
+function columnLabelToIndex(label: string): number {
+  let index = 0;
+  for (let i = 0; i < label.length; i++) {
+    index = index * 26 + (label.charCodeAt(i) - 64);
+  }
+  return index - 1;
+}
+
+function GetCellHandler(sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolInputMap['get_cells']) {
+
+  let references = input.reference;
+
+  if (!Array.isArray(references)) {
+    references = [references];
+  }
+
+  let composite: Record<string, Partial<Record<'values'|'formulas'|'formatted', CellValue|CellValue[][]>>> = {};
+
+  for (const entry of references) {
+
+    const content: Partial<Record<'values'|'formulas'|'formatted', CellValue|CellValue[][]>> = {};
+
+    if (input.values !== false) {
+      content.values = sheet.GetRange(entry);
+    }
+    if (input.formatted) {
+      content.formatted = sheet.GetRange(entry, { type: 'formatted' });
+    }
+    if (input.formulas) {
+      content.formulas = sheet.GetRange(entry, { type: 'formula' });
+    }
+
+    composite[entry] = content;
+
+  }
+
+  return composite;
+
+}
+
+const handlers: ToolHandler = {
+  get_cells: GetCellHandler,
+  list_sheets(sheet, _ui, _input) {
+    return { sheets: sheet.ListSheets() };
+  },
+  activate_sheet(sheet, ui, input) {
+    sheet.ActivateSheet(input.name);
+    return {};
+  },
+  add_sheet(sheet, ui, input) {
+    sheet.AddSheet(input.name);
+    return {};
+  },
+  set_cells(sheet, ui, input) {
+    if (input.values) {
+      for (const [reference, value] of Object.entries(input.values)) {
+        sheet.SetRange(reference, value, { argument_separator: ',' });
+      }
+    }
+    if (input.styles) {
+      for (const [reference, styleInput] of Object.entries(input.styles)) {
+        const style = inputToCellStyle(styleInput);
+        sheet.ApplyStyle(reference, style, true);
+      }
+    }
+    if (input.borders) {
+      for (const [reference, opts] of Object.entries(input.borders)) {
+        sheet.ApplyBorders(reference, opts.borders as BorderConstants, opts.width);
+      }
+    }
+    if (input.auto_resize_columns) {
+      const indices = input.auto_resize_columns.map(columnLabelToIndex);
+      sheet.SetColumnWidth(indices, undefined, false);
+    }
+    return {};
+  },
+  get_style(sheet, ui, input) {
+    const result = sheet.GetStyle(input.reference, true);
+    if (!result) return {};
+    if (Array.isArray(result)) {
+      return { style: result.map((row) => row.map(serializeStyle)) };
+    }
+    return { style: serializeStyle(result) };
+  },
+  async get_spreadsheet(sheet, _ui, input) {
+    return SummarizeSpreadsheet(sheet, input.sheets);
+  },
+  evaluate(sheet, _ui, input) {
+    return sheet.Evaluate(input.expression, { argument_separator: ',' });
+  },
+  select(sheet, _ui, input) {
+    sheet.Select(input.reference);
+    return {};
+  },
+  get_selection(sheet, _ui, _input) {
+    const selection = sheet.GetSelection(true);
+    if (!selection) return { selection: '' };
+    return {
+      selection,
+      values: sheet.GetRange(selection),
+      formulas: sheet.GetRange(selection, { type: 'formula' }),
+      formatted: sheet.GetRange(selection, { type: 'formatted' }),
+    };
+  },
+  update_layout(sheet, _ui, input) {
+    const count = input.count ?? 1;
+    // Schema declares 1-based indices; the spreadsheet API uses 0-based.
+    const index0 = Array.isArray(input.index)
+      ? input.index.map(i => i - 1)
+      : input.index - 1;
+    switch (input.action) {
+      case 'insert_rows':      sheet.InsertRows(index0 as number, count); break;
+      case 'insert_columns':   sheet.InsertColumns(index0 as number, count); break;
+      case 'delete_rows':      sheet.DeleteRows(index0 as number, count); break;
+      case 'delete_columns':   sheet.DeleteColumns(index0 as number, count); break;
+      case 'set_column_width': sheet.SetColumnWidth(index0, input.width); break;
+      case 'set_row_height':   sheet.SetRowHeight(index0, input.height); break;
+    }
+    return {};
+  },
+};
+
+/**
+ * execute a tool call. some calls may be asynchronous. 
+ * 
+ * we have some special methods we need to manage outside of the 
+ * spreadsheet to work with the web app UI, those will get
+ * passed in via the external UI object
+ * 
+ * @param sheet - the active spreadsheet
+ * @param ui - supplied function interface for ui interactions
+ * @param content - the content block
+ * @param partial - content is not complete, but apply partial evaluation.
+ * if this flag is set (1) we don't modify the message, and (2) we don't 
+ * validate. we just do a best-efforts evaluation. this is done to support
+ * streaming updates in the UI, which (IMO) is a better experience
+ * 
+ */
+export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI, content: ToolCallContent, partial = false): Promise<ToolResultContent> {
+
+  // partial application is basically an entirely different path,
+  // we're keeping it in the same method for convenience
+
+  if (partial) {
+    try {
+      // console.info("PARTIAL", {input: content.input});
+      const input = pj_parse(content.input);
+      const handler = handlers[content.name as ToolName];
+      if (handler) {
+        const result = handler(sheet, ui, input);
+        if (result instanceof Promise) {
+          await result;
+        }
+      }
+    }
+    catch (err) {
+      console.info("partial error", {err});
+    }
+
+    // we can use a dummy but keep the shape intact
+    return {
+      name: content.name,
+      type: 'tool_result',
+      tool_use_id: content.id,
+      content: '',
+    }
+  }
+
+  // console.info("REGULAR APPLICATION");
+
+  // before we do anything else, parse the input. we have to do this so the 
+  // message shape is correct when we continue the conversation
+  // 
+  // we _should_ be prevented from doing this twice by the "processed" flag 
+  // on the containing message.
+
+  if (typeof content.input === 'string') {
+    try {
+      // special case for empty string, needs to echo back as empty object
+      content.input = content.input === "" ? {} : JSON.parse(content.input);
+    }
+    catch (err) {
+      console.error('error parsing JSON in ExecuteToolCall');
+      console.info({err, input: content.input});
+      throw err;
+    }
+  }
+
+  const handler = handlers[content.name as ToolName];
+  if (!handler) {
+    throw new Error('no handler registered for tool: ' + content.name);
+  }
+
+  const schema = toolSchemas[content.name as ToolName];
+  if (schema) {
+    const validation = v.safeParse(schema, content.input);
+    if (!validation.success) {
+      return {
+        type: 'tool_result',
+
+        // be sure to scrub name for claude
+        name: content.name,
+
+        // scrub id for gemini (unless it uses it? very unclear)
+        tool_use_id: content.id,
+
+        content: JSON.stringify({
+          error: 'Invalid tool input',
+          issues: validation.issues.map(i => i.message),
+        }),
+      };
+    }
+  }
+  else {
+    return {
+      type: 'tool_result',
+      name: content.name,
+      tool_use_id: content.id,
+      content: JSON.stringify({
+        error: 'Missing schema validator',
+      }),
+    };
+  }
+
+  let result = handler(sheet, ui, content.input);
+
+  if (result instanceof Promise) {
+    result = await result;
+  }
+
+  return {
+    type: 'tool_result',
+    name: content.name,
+    tool_use_id: content.id,
+    content: JSON.stringify(result),
+  }
+
+} 

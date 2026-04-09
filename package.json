@@ -1,0 +1,28 @@
+{
+  "name": "riskamp-web-llm-support",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
+    "@google/genai": "^1.44.0",
+    "@types/markdown-it": "^14.1.2",
+    "@types/markdown-it-link-attributes": "^3.0.5",
+    "@vscode/markdown-it-katex": "^1.1.2",
+    "highlight.js": "^11.11.1",
+    "markdown-it": "^14.1.1",
+    "markdown-it-link-attributes": "^4.0.1",
+    "openai": "^6.27.0",
+    "partial-json": "^0.1.7",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "uuid": "^13.0.0"
+  },
+  "dependencies": {
+    "@valibot/to-json-schema": "^1.5.0",
+    "valibot": "^1.2.0"
+  }
+}
