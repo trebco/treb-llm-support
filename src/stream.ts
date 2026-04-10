@@ -16,13 +16,6 @@ interface Params {
   timeout?: number;
 }
 
-// dev [todo: flag]
-const chunks: unknown[][] = [];
-let current_chunk: unknown[] = [];
-if (typeof self !== 'undefined') {
-  (self as any).chunks = chunks;
-}
-
 export const Stream = async (params: Params) => {
 
   if (!params.api_key) {
@@ -45,9 +38,6 @@ export const Stream = async (params: Params) => {
   };
   
   if (params.worker) {
-
-    current_chunk = [];
-    chunks.push(current_chunk);
 
     /*
     const Timeout = () => {
@@ -124,7 +114,6 @@ export const Stream = async (params: Params) => {
           }
           
           message_stack.push(message);
-          current_chunk.push(JSON.parse(JSON.stringify(message)));
 
           if (!process_timeout) {
             process_timeout = window.setTimeout(() => {

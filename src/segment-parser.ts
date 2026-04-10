@@ -447,6 +447,9 @@ export const ParseSegmentAnthropic: NewSegmentParser = (opts: NewSegmentOpts, js
             const block = message.content[chunk.index];
 
             if (block?.type === 'tool_use') {
+
+              console.info('update');
+
               block.input += json;
             }
             else {

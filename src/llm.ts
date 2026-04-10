@@ -50,7 +50,6 @@ export async function* StreamAnthropicResponse(instance: Anthropic, model: strin
 
   const filtered = messages.filter(test => test.role === 'assistant' || test.role === 'user').map(message => {
     if (message.role === 'user') {  
-
       if (Array.isArray(message.content)) {
         const content: Anthropic.ToolResultBlockParam[] = [];
         for (const entry of message.content) {
