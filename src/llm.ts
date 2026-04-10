@@ -3,7 +3,39 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenAI, type GenerateContentParameters, type Content as GeminiContent } from '@google/genai';
 import type { AssistantChatMessage, ChatMessage, UserChatMessage } from './chat-message';
-import { ToolDefinition, toGeminiFunctionDeclarations, toOpenAIChatCompletionTools } from './tool-schema';
+import { ToolDefinition, toAnthropicTools, toGeminiFunctionDeclarations, toOpenAIChatCompletionTools, toOpenAIResponsesTools } from './tool-schema';
+import { ToolHandlerImageResponseType, ToolHandlerResponseType } from './tool-handlers';
+
+/** helper function */
+function GenerateImageBlockContent(result: ToolHandlerImageResponseType): Anthropic.ToolResultBlockParam['content'] {
+  const content: Anthropic.ToolResultBlockParam['content'] = [];
+
+  const [header, data] = result.image_uri.split(",");
+  const media_type = header.match(/:(.*?);/)?.[1];
+
+  if (media_type !== 'image/jpeg' && media_type !== 'image/png' && media_type !== 'image/webp' && media_type !== 'image/gif') {
+    throw new Error('invalid image type');
+  }
+
+  content.push({
+    type: 'image', 
+    source: { 
+      type: 'base64', 
+      media_type, 
+      data,
+    }
+  });
+
+  if (result.content) {
+    content.push({
+      type: 'text',
+      text: JSON.stringify(result.content),
+    });
+  };
+
+  return content;
+
+}
 
 /** 
  * Anthropic style stream 
@@ -18,27 +50,56 @@ export async function* StreamAnthropicResponse(instance: Anthropic, model: strin
 
   const filtered = messages.filter(test => test.role === 'assistant' || test.role === 'user').map(message => {
     if (message.role === 'user') {  
-      let content = message.content as Anthropic.ToolResultBlockParam[];
-      if (Array.isArray(content)) {
-        content = content.map(entry => ({
-          tool_use_id: entry.tool_use_id,
-          type: entry.type,
-          content: entry.content,
-        }));
+
+      if (Array.isArray(message.content)) {
+        const content: Anthropic.ToolResultBlockParam[] = [];
+        for (const entry of message.content) {
+          switch (entry.content.type) {
+            case 'error':
+              continue;
+            case 'object':
+              content.push({
+                tool_use_id: entry.tool_use_id,
+                type: entry.type,
+                content: JSON.stringify(entry.content),
+              });
+              break;
+            case 'image':
+               content.push({
+                tool_use_id: entry.tool_use_id,
+                type: entry.type,
+                content: GenerateImageBlockContent(entry.content),
+              });
+              break;
+          }
+        }
+        return {
+          role: message.role,
+          content,
+        }
       }
       return {
         role: message.role,
-        content,
+        content: message.content,
       };
     }
+
+    // when we were testing tool search/deferred loading, we were
+    // dropping some content blocks for tool search. I'm not sure
+    // if we need to preserve those or not. it makes sense, but 
+    // it doesn't map well onto our current structure where we 
+    // have our own base message type.
+
     return {
       role: message.role,
-      content: message.content,
+      content: message.content.filter(test => !!test),
     };
   });
 
+  // console.info({filtered});
+
   const stream = await instance.messages.create({
-    tools,
+    tools: tools ? toAnthropicTools(tools) : undefined,
     model,
     max_tokens,
     messages: filtered,
@@ -59,12 +120,109 @@ export async function* StreamAnthropicResponse(instance: Anthropic, model: strin
 
 };
 
+/**
+ * for the time being, we'll use store:true (the default), although
+ * I'm a little edgy about that
+ */
+export async function* StreamResponsesAPI(instance: OpenAI, model: string, messages: ChatMessage[], system: string, temperature: number|undefined, max_tokens: number, tools?: ToolDefinition[]) {
+
+  const input: OpenAI.Responses.ResponseInput = [];
+
+  for (const message of messages) {
+    switch (message.role) {
+      case 'user':
+        if (typeof message.content === 'string') {
+          input.push({
+            role: 'user',
+            content: message.content,
+          });
+        }
+        else {
+          for (const part of message.content) {
+            let output: string | OpenAI.Responses.ResponseFunctionCallOutputItemList = '';
+            switch (part.content.type) {
+              case 'object':
+                output = JSON.stringify(part.content.content);
+                break;
+              case 'error':
+                output = JSON.stringify(part.content);
+                break;
+              case 'image':
+                output = [{
+                    type: 'input_image',
+                    image_url: part.content.image_uri,
+                  }];
+                if (part.content.content) {
+                  output.push({
+                    type: 'input_text',
+                    text: JSON.stringify(part.content.content),
+                  });
+                }
+                break;
+            }
+            input.push({
+              type: 'function_call_output',
+              call_id: part.call_id || part.tool_use_id || '',
+              id: `fc_` + (message.uuid || ''),
+              output,
+            });
+          }
+        }
+        break;
+
+      case 'assistant':
+        {
+          for (const part of message.content) {
+            if (part.type === 'text') {
+              input.push({
+                role: 'assistant',
+                content: part.text,
+              });
+            }
+            else if (part.type === 'tool_use') {
+              input.push({
+                type: 'function_call',
+                arguments: JSON.stringify(part.input || ''),
+                call_id: part.call_id || '',
+                id: part.id || '',
+                name: part.name,
+              });
+            }
+          }
+        }
+        break;
+    }
+  }
+
+  console.info({input});
+
+  const response = await instance.responses.create({
+    model,
+    input,
+    stream: true,
+    instructions: system,
+    tools: tools ? toOpenAIResponsesTools(tools) : undefined,
+    // TODO: reasoning level
+  });
+
+  for await (const chunk of response) {
+    yield chunk;
+  }
+
+}
+
+/**
+ * this is the "legacy" OpenAI API, using the chat completions API.
+ * it does not support tool calls returning images, so we need to 
+ * filter out the screenshot tool.
+ */
 export async function* StreamGPTResponse(instance: OpenAI, model: string, messages: ChatMessage[], system: string, temperature: number|undefined, max_tokens: number, tools?: ToolDefinition[]) {
 
   const openai_messages: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming['messages'] = [];
 
-  // const openai_messages: { role: 'system'|'user'|'assistant', content: string }[] = [];
-  
+  // filter tools
+  tools = tools?.filter(test => !test.options?.requires_image_support);
+ 
   if (system) {
     openai_messages.push({role: 'system', content: system});
   }
@@ -79,10 +237,20 @@ export async function* StreamGPTResponse(instance: OpenAI, model: string, messag
       }
       else {
         for (const part of message.content) {
+
+          if (part.content.type === 'error') {
+            continue;
+          }
+
+          if (part.content.type === 'image') {
+            console.warn('image type not supported in chat completions API');
+            continue;
+          }
+
           openai_messages.push({
             role: 'tool',
             tool_call_id: part.tool_use_id,
-            content: part.content,
+            content: JSON.stringify(part.content.content),
           });
         }
       }
@@ -181,24 +349,62 @@ export async function* StreamGeminiResponse(instance: GoogleGenAI, model: string
           parts: [],
         };
         for (const part of message.content) {
+          if (part.content.type === 'error') {
+            continue;
+          }
+          if (part.content.type === 'image') {
+
+            const [header, data] = part.content.image_uri.split(",");
+            const mimeType = header.match(/:(.*?);/)?.[1];
+
+            gemini_message.parts?.push({
+              functionResponse: {
+                name: part.name,
+                response: { content: part.content.content || {}},
+              },
+            }, {
+              inlineData: {
+                mimeType,
+                data,
+              },
+            });
+          }
+          else {
+            gemini_message.parts?.push({
+              functionResponse: {
+                name: part.name,
+                response: { content: part.content.content },
+              }
+            });
+          }
 
           // tbis is backwards, but TOOD: stop stringifying content,
           // we can stringify for claude when we send it
 
-          let structured_content: any = part.content;
-          try {
-            structured_content = JSON.parse(part.content);
-          }
-          catch {
-            // ...
-          }
+          // let structured_content: any = '';
 
+          /*
+          if (typeof part.content === 'string') {
+            try {
+              structured_content = JSON.parse(part.content);
+            }
+            catch {
+              // ...
+            }
+          }
+          else {
+            structured_content = '(image omitted)';
+          }
+          */
+
+          /*
           gemini_message.parts?.push({
             functionResponse: {
               name: part.name,
               response: { content: structured_content },
             }
           })
+          */
         }
         gemini_messages.push(gemini_message);
       }
@@ -227,7 +433,7 @@ export async function* StreamGeminiResponse(instance: GoogleGenAI, model: string
     }
   }
 
-  // console.info("GM", {gemini_messages});
+  console.info("GM", {gemini_messages});
 
   const params: GenerateContentParameters = {
     model,

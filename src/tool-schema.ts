@@ -1,11 +1,20 @@
 import * as v from 'valibot';
 import { toJsonSchema } from '@valibot/to-json-schema';
+import type { Anthropic } from '@anthropic-ai/sdk';
 import type { FunctionDeclaration } from '@google/genai';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
+import type { FunctionTool, ToolSearchTool } from 'openai/resources/responses/responses';
+
+export type ToolDefinitionOptions = {
+  requires_image_support: boolean;
+  supports_partial_application: boolean;
+  priority: 'high' | 'low';
+}
 
 export type ToolDefinition = {
   name: string;
   description: string;
+  options?: Partial<ToolDefinitionOptions>;
   input_schema: {
     type: 'object';
     properties?: Record<string, unknown>;
@@ -21,11 +30,13 @@ function defineTool<
   name: N,
   description: string,
   schema: S,
+  options?: Partial<ToolDefinitionOptions>,
 ): ToolDefinition & { name: N } {
   const { $schema, ...jsonSchema } = toJsonSchema(schema);
   return {
     name,
     description,
+    options,
     input_schema: jsonSchema as ToolDefinition['input_schema'],
   };
 }
@@ -228,6 +239,25 @@ const SelectSchema = v.object({
 
 const GetSelectionSchema = v.object({});
 
+const GetScreenshotSchema = v.object({});
+
+const RenameSheetSchema = v.object({
+  name: v.pipe(v.string(), v.description('Current name of the sheet to rename.')),
+  new_name: v.pipe(v.string(), v.description('New name for the sheet.')),
+});
+
+const DeleteSheetSchema = v.object({
+  name: v.pipe(v.string(), v.description('Name of the sheet to delete.')),
+});
+
+const MergeCellsSchema = v.object({
+  reference: v.pipe(v.string(), v.description('Range reference to merge (e.g. "A1:C1", "Sheet1!A1:A5").')),
+});
+
+const UnmergeCellsSchema = v.object({
+  reference: v.pipe(v.string(), v.description('Range reference to unmerge (e.g. "A1:C1", "Sheet1!A1:A5").')),
+});
+
 const EvaluateSchema = v.object({
   expression: v.pipe(
     v.string(),
@@ -284,26 +314,33 @@ export const tools = [
     'set_cells',
     'Write values, apply formatting, and/or set borders on spreadsheet cells. Input has three optional blocks: "values" maps references to cell values (strings, numbers, booleans, or 2D arrays — strings starting with "=" are formulas, always use comma as the argument separator), "styles" maps references to style objects (delta apply), and "borders" maps references to border options. At least one block is required. Optionally include "auto_resize_columns" with an array of column labels (e.g. ["A", "B"]) to auto-fit column widths after changes. Examples: {"values": {"A1": 100}}, {"values": {"A1": "=SUM(B1, B2)"}, "styles": {"A1": {"bold": true}}}, {"borders": {"A1:C3": {"borders": "all"}}}.',
     SetCellsSchema,
+    {
+      supports_partial_application: true,
+    }
   ),
   defineTool(
     'list_sheets',
     'List all sheets (tabs) in the workbook, including hidden sheets.',
     ListSheetsSchema,
+    { priority: 'low' },
   ),
   defineTool(
     'activate_sheet',
     'Activates a sheet (tab) in the workbook, bringing it to the front of the user interface.',
     ActivateSheetSchema,
+    { priority: 'low' },
   ),
   defineTool(
     'add_sheet',
     'Add a new sheet to the workbook.',
     AddSheetSchema,
+    { priority: 'low' },
   ),
   defineTool(
     'get_style',
     'Read cell formatting/style from a cell or range. Returns properties like bold, italic, font size, colors, alignment, number format, etc.',
     GetStyleSchema,
+    { priority: 'low' },
   ),
   defineTool(
     'get_spreadsheet',
@@ -319,6 +356,7 @@ export const tools = [
     'update_layout',
     'Insert or delete rows or columns, or set column widths or row heights in the active sheet. For resize actions, omit width/height to auto-size to fit content.',
     UpdateLayoutSchema,
+    { priority: 'low' },
   ),
   defineTool(
     'select',
@@ -330,9 +368,62 @@ export const tools = [
     "Get the user's current spreadsheet selection. Returns the selection address/range along with cell values, formulas, and formatted display strings for the selected cells. Use this to understand what the user is looking at or referring to.",
     GetSelectionSchema,
   ),
+  defineTool(
+    'get_screenshot',
+    'Capture a screenshot of the current spreadsheet view as the user sees it. Returns an image of the spreadsheet in its current state, including visible cells, formatting, and charts.',
+    GetScreenshotSchema,
+    {
+      requires_image_support: true,
+    }
+  ),
+  defineTool(
+    'rename_sheet',
+    'Rename a sheet (tab) in the workbook.',
+    RenameSheetSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'delete_sheet',
+    'Delete a sheet (tab) from the workbook.',
+    DeleteSheetSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'merge_cells',
+    'Merge a range of cells into a single cell. The value of the top-left cell is preserved.',
+    MergeCellsSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'unmerge_cells',
+    'Unmerge a previously merged range of cells.',
+    UnmergeCellsSchema,
+    { priority: 'low' },
+  ),
 ] as const satisfies ToolDefinition[];
 
 export type ToolName = (typeof tools)[number]['name'];
+
+export const tools_map = new Map<ToolName, ToolDefinition>();
+for (const entry of tools) {
+  tools_map.set(entry.name, entry);
+}
+
+export function toAnthropicTools(tools: ToolDefinition[], defer = false): Array<Anthropic.Messages.Tool | Anthropic.Messages.ToolSearchToolBm25_20251119> {
+  const result: Array<Anthropic.Messages.Tool | Anthropic.Messages.ToolSearchToolBm25_20251119> = tools.map(tool => ({
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.input_schema,
+    ...((defer && tool.options?.priority === 'low') ? { defer_loading: true } : {}),
+  }));
+  if (defer) {
+    result.push({
+      type: 'tool_search_tool_bm25_20251119',
+      name: 'tool_search_tool_bm25',
+    });
+  }
+  return result;
+}
 
 export function toGeminiFunctionDeclarations(tools: ToolDefinition[]): FunctionDeclaration[] {
   return tools.map(tool => ({
@@ -343,14 +434,106 @@ export function toGeminiFunctionDeclarations(tools: ToolDefinition[]): FunctionD
 }
 
 export function toOpenAIChatCompletionTools(tools: ToolDefinition[]): ChatCompletionTool[] {
-  return tools.map(tool => ({
-    type: 'function',
-    function: {
+  return tools
+    .filter(tool => tool.options?.priority !== 'low')
+    .map(tool => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.input_schema,
+      },
+    }));
+}
+
+export function toOpenAIResponsesTools(tools: ToolDefinition[], defer = false): Array<FunctionTool | ToolSearchTool> {
+  const result: Array<FunctionTool | ToolSearchTool> = tools.map(tool => {
+    const { schema, strict } = prepareForStrictMode(tool.input_schema);
+    return {
+      type: 'function' as const,
       name: tool.name,
       description: tool.description,
-      parameters: tool.input_schema,
-    },
-  }));
+      parameters: schema,
+      strict,
+      ...((defer && tool.options?.priority === 'low') ? { defer_loading: true } : {}),
+    };
+  });
+  if (defer) {
+    result.push({ type: 'tool_search' });
+  }
+  return result;
+}
+
+/**
+ * Prepares a JSON schema for OpenAI strict mode by adding
+ * `additionalProperties: false` to all objects and making all properties
+ * required (optional ones become nullable). Falls back to strict: false
+ * for schemas containing record/map types.
+ */
+function prepareForStrictMode(
+  inputSchema: ToolDefinition['input_schema'],
+): { schema: ToolDefinition['input_schema']; strict: boolean } {
+  const schema = structuredClone(inputSchema);
+  const strict = applyStrictConstraints(schema);
+  return { schema, strict };
+}
+
+type JsonSchemaNode = Record<string, unknown>;
+
+function isObj(x: unknown): x is JsonSchemaNode {
+  return typeof x === 'object' && x !== null && !Array.isArray(x);
+}
+
+/** Mutates `node` in place. Returns false if strict mode is impossible. */
+function applyStrictConstraints(node: JsonSchemaNode): boolean {
+  // Recurse into anyOf variants
+  if (Array.isArray(node.anyOf)) {
+    for (const variant of node.anyOf) {
+      if (isObj(variant) && !applyStrictConstraints(variant)) return false;
+    }
+  }
+
+  // Recurse into array items
+  if (node.type === 'array' && isObj(node.items)) {
+    if (!applyStrictConstraints(node.items)) return false;
+  }
+
+  if (node.type !== 'object') return true;
+
+  const props = node.properties;
+  if (isObj(props)) {
+    // Fixed-shape object: lock down and make all properties required
+    const origRequired = new Set(
+      Array.isArray(node.required) ? (node.required as string[]) : [],
+    );
+    node.additionalProperties = false;
+    delete node.propertyNames;
+    node.required = Object.keys(props);
+
+    for (const [key, propSchema] of Object.entries(props) as [string, JsonSchemaNode][]) {
+      if (!origRequired.has(key)) {
+        // Wrap optional property as nullable
+        const { description, ...rest } = propSchema;
+        const wrapped: JsonSchemaNode = {
+          anyOf: [rest, { type: 'null' }],
+        };
+        if (description !== undefined) wrapped.description = description;
+        props[key] = wrapped;
+        if (!applyStrictConstraints(wrapped)) return false;
+      } else {
+        if (!applyStrictConstraints(propSchema)) return false;
+      }
+    }
+  } else if (isObj(node.additionalProperties)) {
+    // Record/map type — incompatible with strict mode
+    return false;
+  } else {
+    // Object with no properties (e.g. empty object)
+    node.additionalProperties = false;
+    if (!node.required) node.required = [];
+  }
+
+  return true;
 }
 
 export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
@@ -365,6 +548,11 @@ export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   update_layout: UpdateLayoutSchema,
   select: SelectSchema,
   get_selection: GetSelectionSchema,
+  get_screenshot: GetScreenshotSchema,
+  rename_sheet: RenameSheetSchema,
+  delete_sheet: DeleteSheetSchema,
+  merge_cells: MergeCellsSchema,
+  unmerge_cells: UnmergeCellsSchema,
 };
 
 export type ToolInputMap = {
@@ -379,4 +567,9 @@ export type ToolInputMap = {
   update_layout: v.InferInput<typeof UpdateLayoutSchema>;
   select: v.InferInput<typeof SelectSchema>;
   get_selection: v.InferInput<typeof GetSelectionSchema>;
+  get_screenshot: v.InferInput<typeof GetScreenshotSchema>;
+  rename_sheet: v.InferInput<typeof RenameSheetSchema>;
+  delete_sheet: v.InferInput<typeof DeleteSheetSchema>;
+  merge_cells: v.InferInput<typeof MergeCellsSchema>;
+  unmerge_cells: v.InferInput<typeof UnmergeCellsSchema>;
 };

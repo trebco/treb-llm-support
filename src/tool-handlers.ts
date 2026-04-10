@@ -1,7 +1,7 @@
 
 import type { ToolCallContent, ToolResultContent } from './chat-message';
 import type { ToolInputMap, ToolName } from './tool-schema';
-import { toolSchemas } from './tool-schema';
+import { toolSchemas, tools_map } from './tool-schema';
 import * as v from 'valibot';
 import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants } from './treb';
 import { SummarizeSpreadsheet } from './support-functions';
@@ -10,10 +10,34 @@ import { parse as pj_parse } from 'partial-json';
 /** placeholder */
 export interface ExternalUI {
 
+  /** returns screenshot of current view, as b64-encoded data URI */
+  Screenshot: (sheet: EmbeddedSpreadsheet) => string;
+
 }
 
+export type ToolHandlerImageResponseType = {
+  type: 'image',
+  image_uri: string;
+  content?: unknown;
+};
+
+export type ToolHandlerGenericResposneType = {
+  type: 'object',
+  content: unknown,
+};
+
+export type ToolHandlerErrorType = {
+  type: 'error',
+  content: unknown,
+};
+
+export type ToolHandlerResponseType = 
+  ToolHandlerGenericResposneType | 
+  ToolHandlerImageResponseType |
+  ToolHandlerErrorType ;
+
 type ToolHandler = {
-  [K in ToolName]: (sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolInputMap[K]) => unknown|Promise<unknown>;
+  [K in ToolName]: (sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolInputMap[K]) => ToolHandlerResponseType|Promise<ToolHandlerResponseType>;
 };
 
 // --- Color conversion ---
@@ -100,7 +124,7 @@ function columnLabelToIndex(label: string): number {
   return index - 1;
 }
 
-function GetCellHandler(sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolInputMap['get_cells']) {
+function GetCellHandler(sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolInputMap['get_cells']): ToolHandlerGenericResposneType {
 
   let references = input.reference;
 
@@ -128,22 +152,30 @@ function GetCellHandler(sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolI
 
   }
 
-  return composite;
+  return {
+    type: 'object', 
+    content: composite
+  };
 
 }
+
+const WrapContent = (content: unknown): ToolHandlerGenericResposneType => ({
+  type: 'object',
+  content,
+});
 
 const handlers: ToolHandler = {
   get_cells: GetCellHandler,
   list_sheets(sheet, _ui, _input) {
-    return { sheets: sheet.ListSheets() };
+    return WrapContent({ sheets: sheet.ListSheets() });
   },
   activate_sheet(sheet, ui, input) {
     sheet.ActivateSheet(input.name);
-    return {};
+    return WrapContent({});
   },
   add_sheet(sheet, ui, input) {
     sheet.AddSheet(input.name);
-    return {};
+    return WrapContent({});
   },
   set_cells(sheet, ui, input) {
     if (input.values) {
@@ -166,35 +198,60 @@ const handlers: ToolHandler = {
       const indices = input.auto_resize_columns.map(columnLabelToIndex);
       sheet.SetColumnWidth(indices, undefined, false);
     }
-    return {};
+    return WrapContent({});
   },
   get_style(sheet, ui, input) {
     const result = sheet.GetStyle(input.reference, true);
-    if (!result) return {};
+    if (!result) return WrapContent({});
     if (Array.isArray(result)) {
-      return { style: result.map((row) => row.map(serializeStyle)) };
+      return WrapContent({ style: result.map((row) => row.map(serializeStyle)) });
     }
-    return { style: serializeStyle(result) };
+    return WrapContent({ style: serializeStyle(result) });
   },
   async get_spreadsheet(sheet, _ui, input) {
-    return SummarizeSpreadsheet(sheet, input.sheets);
+    return WrapContent(SummarizeSpreadsheet(sheet, input.sheets));
   },
   evaluate(sheet, _ui, input) {
-    return sheet.Evaluate(input.expression, { argument_separator: ',' });
+    return WrapContent(sheet.Evaluate(input.expression, { argument_separator: ',' }));
   },
   select(sheet, _ui, input) {
     sheet.Select(input.reference);
-    return {};
+    return WrapContent({});
   },
   get_selection(sheet, _ui, _input) {
     const selection = sheet.GetSelection(true);
-    if (!selection) return { selection: '' };
-    return {
+    if (!selection) return WrapContent({ selection: '' });
+    return WrapContent({
       selection,
       values: sheet.GetRange(selection),
       formulas: sheet.GetRange(selection, { type: 'formula' }),
       formatted: sheet.GetRange(selection, { type: 'formatted' }),
+    });
+  },
+  get_screenshot(_sheet, ui, _input) {
+    return { type: 'image', 
+      image_uri: ui.Screenshot(_sheet) || '',
+      content: {
+        active_sheet: _sheet.active_sheet,
+        user_selection: _sheet.GetSelection(true),
+      },
     };
+  },
+  rename_sheet(sheet, _ui, input) {
+    sheet.RenameSheet(input.name, input.new_name);
+    return WrapContent({});
+  },
+  delete_sheet(sheet, _ui, input) {
+    sheet.DeleteSheet(input.name);
+    return WrapContent({});
+  },
+  merge_cells(sheet, _ui, input) {
+    sheet.MergeCells(input.reference);
+    return WrapContent({});
+  },
+  unmerge_cells(sheet, _ui, input) {
+    sheet.UnmergeCells(input.reference);
+    return WrapContent({});
   },
   update_layout(sheet, _ui, input) {
     const count = input.count ?? 1;
@@ -210,7 +267,7 @@ const handlers: ToolHandler = {
       case 'set_column_width': sheet.SetColumnWidth(index0, input.width); break;
       case 'set_row_height':   sheet.SetRowHeight(index0, input.height); break;
     }
-    return {};
+    return WrapContent({});
   },
 };
 
@@ -236,19 +293,25 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
   // we're keeping it in the same method for convenience
 
   if (partial) {
-    try {
-      // console.info("PARTIAL", {input: content.input});
-      const input = pj_parse(content.input);
-      const handler = handlers[content.name as ToolName];
-      if (handler) {
-        const result = handler(sheet, ui, input);
-        if (result instanceof Promise) {
-          await result;
+
+    // ensure this tool supports partial application
+
+    const tool = tools_map.get(content.name as ToolName);
+    if (tool?.options?.supports_partial_application && content.input) {
+      try {
+        // console.info("PARTIAL", {input: content.input});
+        const input = pj_parse(content.input);
+        const handler = handlers[content.name as ToolName];
+        if (handler) {
+          const result = handler(sheet, ui, input);
+          if (result instanceof Promise) {
+            await result;
+          }
         }
       }
-    }
-    catch (err) {
-      console.info("partial error", {err});
+      catch (err) {
+        console.info("partial error", {err});
+      }
     }
 
     // we can use a dummy but keep the shape intact
@@ -256,10 +319,14 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
       name: content.name,
       type: 'tool_result',
       tool_use_id: content.id,
-      content: '',
+      call_id: content.call_id,
+      content: {
+        type: 'object', content: '',
+      },
     }
-  }
 
+  }
+  
   // console.info("REGULAR APPLICATION");
 
   // before we do anything else, parse the input. we have to do this so the 
@@ -298,10 +365,17 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
         // scrub id for gemini (unless it uses it? very unclear)
         tool_use_id: content.id,
 
-        content: JSON.stringify({
-          error: 'Invalid tool input',
-          issues: validation.issues.map(i => i.message),
-        }),
+        // special for OpenAI responses API
+        call_id: content.call_id,
+
+        content: {
+          type: 'error',
+          content: {
+            message: 'invalid tool input',
+            detail: validation.issues.map(i => i.message),
+          },
+        }
+
       };
     }
   }
@@ -310,9 +384,11 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
       type: 'tool_result',
       name: content.name,
       tool_use_id: content.id,
-      content: JSON.stringify({
-        error: 'Missing schema validator',
-      }),
+      call_id: content.call_id,
+      content: {
+        type: 'error',
+        content: 'Missing schema validator',
+      },
     };
   }
 
@@ -326,7 +402,9 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
     type: 'tool_result',
     name: content.name,
     tool_use_id: content.id,
-    content: JSON.stringify(result),
+    call_id: content.call_id,
+    // content: JSON.stringify(result),
+    content: result,
   }
 
 } 

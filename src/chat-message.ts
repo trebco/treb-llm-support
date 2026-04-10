@@ -1,4 +1,6 @@
 
+import type { ToolHandlerResponseType } from './tool-handlers';
+
 export interface GeminiOptionalContent {
   /** gemini-specific field */
   thoughtSignature?: string;
@@ -14,6 +16,10 @@ export interface ToolCallContent extends GeminiOptionalContent {
   input: any;
   name: string;
   id: string;
+
+  // special for responses API
+  call_id?: string;
+
 }
 
 export interface ToolResultContent {
@@ -23,7 +29,8 @@ export interface ToolResultContent {
   name: string;
 
   tool_use_id: string;
-  content: string;
+  call_id?: string;
+  content: ToolHandlerResponseType;
 }
 
 export type AssistantChatMessage = {

@@ -101,7 +101,15 @@ const list: Model[] = [
       output: 0.42,
     },
   },
-
+  {
+    label: 'Gemini 3.1 Flash Lite (preview)',
+    name: 'gemini-3.1-flash-lite-preview',
+    provider: gemini_provider,
+    cost: {
+      input: 0.25,
+      output: 1.50,
+    }
+  },  
   {
     label: 'Gemini 3 Flash (preview)',
     name: 'gemini-3-flash-preview',
@@ -112,23 +120,13 @@ const list: Model[] = [
     }
   },  
   {
-    label: 'Gemini 3.1 Flash-Lite (preview)',
-    name: 'gemini-3.1-flash-lite-preview',
+    label: 'Gemini 3.1 Pro (preview)',
+    name: 'gemini-3.1-pro-preview',
     provider: gemini_provider,
     cost: {
-      input: 0.25,
-      output: 1.50,
+      input: 2.00,
+      output: 12.00,
     }
-  },
-
-  {
-    label: 'Claude Haiku 4.5',
-    name: 'claude-haiku-4-5',
-    provider: anthropic_provider,
-    cost: {
-      input: 1.00,
-      output: 5.00,
-    },
   },
   {
     label: 'Claude Sonnet 4.6',
@@ -140,12 +138,30 @@ const list: Model[] = [
     },
   },
   {
-    label: 'Placeholder Model',
-    name: 'placeholder',
+    label: 'Claude Opus 4.6',
+    name: 'claude-opus-4-6',
+    provider: anthropic_provider,
+    cost: {
+      input: 5.00,
+      output: 25.00,
+    },
+  },
+  {
+    label: 'GPT-5.4',
+    name: 'gpt-5.4',
     provider: openai_provider,
     cost: {
-      input: 100.00,
-      output: 100.00,
+      input: 2.50,
+      output: 15.00,
+    },
+  },
+  {
+    label: 'GPT-5.4 mini',
+    name: 'gpt-5.4-mini',
+    provider: openai_provider,
+    cost: {
+      input: 0.75,
+      output: 4.50,
     },
   },
 

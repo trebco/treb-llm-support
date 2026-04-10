@@ -1,4 +1,4 @@
-/*! API v37.2. Copyright 2018-2026 trebco, llc. All rights reserved. LGPL: https://treb.app/license */
+/*! API v37.3. Copyright 2018-2026 trebco, llc. All rights reserved. LGPL: https://treb.app/license */
 /*
  * This file is part of TREB.
  *
@@ -709,6 +709,7 @@ export declare class EmbeddedSpreadsheet<USER_DATA_TYPE = unknown> {
      * @public
      */
     UnmergeCells(range?: RangeReference): void;
+    Screenshot(type: 'png' | 'webp' | 'jpeg' | undefined, quality?: number | undefined, download?: boolean): string | undefined;
 
     /**
      * revert to the network version of this document, if `local_storage`
