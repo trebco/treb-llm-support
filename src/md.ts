@@ -4,8 +4,7 @@ import katex from '@vscode/markdown-it-katex';
 import hljs from 'highlight.js';
 import markdownItLinkAttributes from 'markdown-it-link-attributes';
 
-
-const md_content2 = markdownit({
+const md = markdownit({
   typographer: false,
   linkify: true,
   highlight: function (str: string, lang: string) {
@@ -43,15 +42,22 @@ const md_content2 = markdownit({
 });
 
 if (typeof window !== 'undefined') {
-  // FIXME // md_content2.use(katex);
-  md_content2.use(markdownItLinkAttributes, {
+
+  const abstract = katex as any;
+  if (typeof abstract === 'object' && 'default' in abstract) {
+    md.use((katex as any).default);
+  }
+  else {
+    md.use(katex);    
+  }
+  md.use(markdownItLinkAttributes, {
   attrs: {
     target: "_blank",
     rel: "noopener", // It is a best practice to add rel="noopener" for security
   },
 });
-  md_content2.enable('linkify');
+  md.enable('linkify');
 }
 
-export const Format = (text: string) => md_content2.render(text);
+export const Format = (text: string) => md.render(text);
 
