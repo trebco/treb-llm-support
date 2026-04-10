@@ -2,10 +2,17 @@ import * as v from 'valibot';
 import { toJsonSchema } from '@valibot/to-json-schema';
 import type { FunctionDeclaration } from '@google/genai';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions';
+import type { FunctionTool } from 'openai/resources/responses/responses';
+
+export type ToolDefinitionOptions = {
+  requires_image_support: boolean;
+  supports_partial_application: boolean;
+}
 
 export type ToolDefinition = {
   name: string;
   description: string;
+  options?: Partial<ToolDefinitionOptions>;
   input_schema: {
     type: 'object';
     properties?: Record<string, unknown>;
@@ -21,11 +28,13 @@ function defineTool<
   name: N,
   description: string,
   schema: S,
+  options?: Partial<ToolDefinitionOptions>,
 ): ToolDefinition & { name: N } {
   const { $schema, ...jsonSchema } = toJsonSchema(schema);
   return {
     name,
     description,
+    options,
     input_schema: jsonSchema as ToolDefinition['input_schema'],
   };
 }
@@ -228,6 +237,25 @@ const SelectSchema = v.object({
 
 const GetSelectionSchema = v.object({});
 
+const GetScreenshotSchema = v.object({});
+
+const RenameSheetSchema = v.object({
+  name: v.pipe(v.string(), v.description('Current name of the sheet to rename.')),
+  new_name: v.pipe(v.string(), v.description('New name for the sheet.')),
+});
+
+const DeleteSheetSchema = v.object({
+  name: v.pipe(v.string(), v.description('Name of the sheet to delete.')),
+});
+
+const MergeCellsSchema = v.object({
+  reference: v.pipe(v.string(), v.description('Range reference to merge (e.g. "A1:C1", "Sheet1!A1:A5").')),
+});
+
+const UnmergeCellsSchema = v.object({
+  reference: v.pipe(v.string(), v.description('Range reference to unmerge (e.g. "A1:C1", "Sheet1!A1:A5").')),
+});
+
 const EvaluateSchema = v.object({
   expression: v.pipe(
     v.string(),
@@ -284,6 +312,9 @@ export const tools = [
     'set_cells',
     'Write values, apply formatting, and/or set borders on spreadsheet cells. Input has three optional blocks: "values" maps references to cell values (strings, numbers, booleans, or 2D arrays — strings starting with "=" are formulas, always use comma as the argument separator), "styles" maps references to style objects (delta apply), and "borders" maps references to border options. At least one block is required. Optionally include "auto_resize_columns" with an array of column labels (e.g. ["A", "B"]) to auto-fit column widths after changes. Examples: {"values": {"A1": 100}}, {"values": {"A1": "=SUM(B1, B2)"}, "styles": {"A1": {"bold": true}}}, {"borders": {"A1:C3": {"borders": "all"}}}.',
     SetCellsSchema,
+    {
+      supports_partial_application: true,
+    }
   ),
   defineTool(
     'list_sheets',
@@ -330,9 +361,42 @@ export const tools = [
     "Get the user's current spreadsheet selection. Returns the selection address/range along with cell values, formulas, and formatted display strings for the selected cells. Use this to understand what the user is looking at or referring to.",
     GetSelectionSchema,
   ),
+  defineTool(
+    'get_screenshot',
+    'Capture a screenshot of the current spreadsheet view as the user sees it. Returns an image of the spreadsheet in its current state, including visible cells, formatting, and charts.',
+    GetScreenshotSchema,
+    {
+      requires_image_support: true,
+    }
+  ),
+  defineTool(
+    'rename_sheet',
+    'Rename a sheet (tab) in the workbook.',
+    RenameSheetSchema,
+  ),
+  defineTool(
+    'delete_sheet',
+    'Delete a sheet (tab) from the workbook.',
+    DeleteSheetSchema,
+  ),
+  defineTool(
+    'merge_cells',
+    'Merge a range of cells into a single cell. The value of the top-left cell is preserved.',
+    MergeCellsSchema,
+  ),
+  defineTool(
+    'unmerge_cells',
+    'Unmerge a previously merged range of cells.',
+    UnmergeCellsSchema,
+  ),
 ] as const satisfies ToolDefinition[];
 
 export type ToolName = (typeof tools)[number]['name'];
+
+export const tools_map = new Map<ToolName, ToolDefinition>();
+for (const entry of tools) {
+  tools_map.set(entry.name, entry);
+}
 
 export function toGeminiFunctionDeclarations(tools: ToolDefinition[]): FunctionDeclaration[] {
   return tools.map(tool => ({
@@ -353,6 +417,91 @@ export function toOpenAIChatCompletionTools(tools: ToolDefinition[]): ChatComple
   }));
 }
 
+export function toOpenAIResponsesTools(tools: ToolDefinition[]): FunctionTool[] {
+  return tools.map(tool => {
+    const { schema, strict } = prepareForStrictMode(tool.input_schema);
+    return {
+      type: 'function' as const,
+      name: tool.name,
+      description: tool.description,
+      parameters: schema,
+      strict,
+    };
+  });
+}
+
+/**
+ * Prepares a JSON schema for OpenAI strict mode by adding
+ * `additionalProperties: false` to all objects and making all properties
+ * required (optional ones become nullable). Falls back to strict: false
+ * for schemas containing record/map types.
+ */
+function prepareForStrictMode(
+  inputSchema: ToolDefinition['input_schema'],
+): { schema: ToolDefinition['input_schema']; strict: boolean } {
+  const schema = structuredClone(inputSchema);
+  const strict = applyStrictConstraints(schema);
+  return { schema, strict };
+}
+
+type JsonSchemaNode = Record<string, unknown>;
+
+function isObj(x: unknown): x is JsonSchemaNode {
+  return typeof x === 'object' && x !== null && !Array.isArray(x);
+}
+
+/** Mutates `node` in place. Returns false if strict mode is impossible. */
+function applyStrictConstraints(node: JsonSchemaNode): boolean {
+  // Recurse into anyOf variants
+  if (Array.isArray(node.anyOf)) {
+    for (const variant of node.anyOf) {
+      if (isObj(variant) && !applyStrictConstraints(variant)) return false;
+    }
+  }
+
+  // Recurse into array items
+  if (node.type === 'array' && isObj(node.items)) {
+    if (!applyStrictConstraints(node.items)) return false;
+  }
+
+  if (node.type !== 'object') return true;
+
+  const props = node.properties;
+  if (isObj(props)) {
+    // Fixed-shape object: lock down and make all properties required
+    const origRequired = new Set(
+      Array.isArray(node.required) ? (node.required as string[]) : [],
+    );
+    node.additionalProperties = false;
+    delete node.propertyNames;
+    node.required = Object.keys(props);
+
+    for (const [key, propSchema] of Object.entries(props) as [string, JsonSchemaNode][]) {
+      if (!origRequired.has(key)) {
+        // Wrap optional property as nullable
+        const { description, ...rest } = propSchema;
+        const wrapped: JsonSchemaNode = {
+          anyOf: [rest, { type: 'null' }],
+        };
+        if (description !== undefined) wrapped.description = description;
+        props[key] = wrapped;
+        if (!applyStrictConstraints(wrapped)) return false;
+      } else {
+        if (!applyStrictConstraints(propSchema)) return false;
+      }
+    }
+  } else if (isObj(node.additionalProperties)) {
+    // Record/map type — incompatible with strict mode
+    return false;
+  } else {
+    // Object with no properties (e.g. empty object)
+    node.additionalProperties = false;
+    if (!node.required) node.required = [];
+  }
+
+  return true;
+}
+
 export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   get_cells: GetCellsSchema,
   set_cells: SetCellsSchema,
@@ -365,6 +514,11 @@ export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   update_layout: UpdateLayoutSchema,
   select: SelectSchema,
   get_selection: GetSelectionSchema,
+  get_screenshot: GetScreenshotSchema,
+  rename_sheet: RenameSheetSchema,
+  delete_sheet: DeleteSheetSchema,
+  merge_cells: MergeCellsSchema,
+  unmerge_cells: UnmergeCellsSchema,
 };
 
 export type ToolInputMap = {
@@ -379,4 +533,9 @@ export type ToolInputMap = {
   update_layout: v.InferInput<typeof UpdateLayoutSchema>;
   select: v.InferInput<typeof SelectSchema>;
   get_selection: v.InferInput<typeof GetSelectionSchema>;
+  get_screenshot: v.InferInput<typeof GetScreenshotSchema>;
+  rename_sheet: v.InferInput<typeof RenameSheetSchema>;
+  delete_sheet: v.InferInput<typeof DeleteSheetSchema>;
+  merge_cells: v.InferInput<typeof MergeCellsSchema>;
+  unmerge_cells: v.InferInput<typeof UnmergeCellsSchema>;
 };

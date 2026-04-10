@@ -43,7 +43,7 @@ const md_content2 = markdownit({
 });
 
 if (typeof window !== 'undefined') {
-  md_content2.use(katex);
+  // FIXME // md_content2.use(katex);
   md_content2.use(markdownItLinkAttributes, {
   attrs: {
     target: "_blank",

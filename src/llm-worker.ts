@@ -1,6 +1,6 @@
 
 import type { ChatMessage } from './chat-message';
-import { StreamAnthropicResponse, StreamGeminiResponse, StreamGPTResponse } from './llm';
+import { StreamAnthropicResponse, StreamGeminiResponse, StreamGPTResponse, StreamResponsesAPI } from './llm';
 
 import { Anthropic } from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
@@ -40,6 +40,11 @@ export interface OpenAIChunkMessage {
   chunk: OpenAI.Chat.Completions.ChatCompletionChunk;
 }
 
+export interface OpenAIResponsesChunkMessage {
+  type: 'openai-responses-chunk';
+  chunk: OpenAI.Responses.ResponseStreamEvent;
+}
+
 export interface AnthropicChunkMessage {
   type: 'anthropic-chunk';
   chunk: Anthropic.Messages.RawMessageStreamEvent;
@@ -60,6 +65,7 @@ export type MessageType =
   OpenAIChunkMessage | 
   AnthropicChunkMessage | 
   GeminiChunkMessage |
+  OpenAIResponsesChunkMessage |
   CompleteMessage ;
 
 const Post = (message: MessageType) => {
@@ -69,6 +75,7 @@ const Post = (message: MessageType) => {
 const Init = async (message: InitMessage) => {
 
   let instance: Anthropic|OpenAI|GoogleGenAI|undefined;
+  let openai_legacy_api = true;
 
   switch (message.model.provider.name) {
     case 'Anthropic':
@@ -133,6 +140,7 @@ const Init = async (message: InitMessage) => {
         });
       }
       instance = openai;
+      openai_legacy_api = false;
       break;
 
     case 'Gemini': // old name
@@ -158,11 +166,21 @@ const Init = async (message: InitMessage) => {
 
   try {
     if (instance instanceof OpenAI) {
-      for await (const chunk of StreamGPTResponse(instance, message.model.name, message.messages, message.system_prompt, message.temperature, DEFAULT_MAX_TOKENS, message.tools)) {
-        Post({
-          type: 'openai-chunk',
-          chunk,
-        });
+      if (openai_legacy_api) {
+        for await (const chunk of StreamGPTResponse(instance, message.model.name, message.messages, message.system_prompt, message.temperature, DEFAULT_MAX_TOKENS, message.tools)) {
+          Post({
+            type: 'openai-chunk',
+            chunk,
+          });
+        }
+      }
+      else {
+        for await (const chunk of StreamResponsesAPI(instance, message.model.name, message.messages, message.system_prompt, message.temperature, DEFAULT_MAX_TOKENS, message.tools)) {
+          Post({
+            type: 'openai-responses-chunk',
+            chunk,
+          });
+        }
       }
     }
     else if (instance instanceof GoogleGenAI) {

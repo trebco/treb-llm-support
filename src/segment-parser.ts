@@ -12,9 +12,131 @@ export interface NewSegmentOpts {
   current_message_index?: number;
 }
 
-export type NewSegmentParser = (opts: NewSegmentOpts, json: string[]) => void; // SegmentMetadata|void;
+export type NewSegmentParser = (opts: NewSegmentOpts, json: string[]) => boolean; // SegmentMetadata|void;
+
+export const ParseSegmentResponses: NewSegmentParser = (opts: NewSegmentOpts, json: string[]) => {
+
+  let complete = false;
+
+  if (json.length) {
+    const chunk = JSON.parse(json.join('')) as OpenAI.Responses.ResponseStreamEvent;
+
+    // console.info({chunk});
+
+    switch (chunk.type) {
+      case 'response.created':
+        opts.current_message_index = opts.messages.length;
+        opts.messages[opts.current_message_index] = {
+          uuid: crypto.randomUUID(),
+          role: 'assistant',
+          content: [],
+          generator: chunk.response.model,
+        };
+        break;
+
+      // here we're only using the last message, containing the 
+      // full data. for some tools (specifically set_cells) we 
+      // could support intermediate/partial processing. TODO.
+
+      case 'response.output_item.done':
+        if (typeof opts.current_message_index === 'number') {
+          const message = opts.messages[opts.current_message_index] as AssistantChatMessage;
+          if (chunk.item.type === 'function_call') {
+            message.content.push({
+              type: 'tool_use',
+              id: chunk.item.id || '',
+              call_id: chunk.item.call_id,
+              name: chunk.item.name || '',
+              input: chunk.item.arguments || '',
+            });
+          }
+        }
+
+        break;
+
+      /*
+      case 'response.function_call_arguments.done':
+        break;
+
+      case 'response.function_call_arguments.delta':
+        break;
+
+      case 'response.output_item.added':
+        if (typeof opts.current_message_index === 'number') {
+          const message = opts.messages[opts.current_message_index] as AssistantChatMessage;
+          if (chunk.item.type === 'function_call') {
+
+            // create a new tool call entry
+            message.content.push({
+              type: 'tool_use',
+              id: chunk.item.id || '',
+              call_id: chunk.item.call_id,
+              name: chunk.item.name || '',
+              input: chunk.item.arguments || '',
+            })
+
+          }
+          else {
+            console.info("OTHER TYPE", chunk.item.type);
+          }
+        }
+        break;
+      */
+
+      case 'error':
+        if (typeof opts.current_message_index === 'number') {
+          const message = opts.messages[opts.current_message_index] as AssistantChatMessage;
+          message.complete = true;
+        }
+        else {
+          opts.messages.push({
+            uuid: crypto.randomUUID(),
+            role: 'error',
+            message: chunk.message,
+          });
+        }
+        complete = true;
+        break;
+
+      case 'response.completed':
+        if (typeof opts.current_message_index === 'number') {
+          const message = opts.messages[opts.current_message_index] as AssistantChatMessage;
+          message.complete = true;
+          complete = true;
+        }
+        break;
+
+      case 'response.output_text.delta':
+        if (typeof opts.current_message_index === 'number') {
+          const message = opts.messages[opts.current_message_index] as AssistantChatMessage;
+          let inserted = false;
+          for (const part of message.content) {
+            if (part.type === 'text') {
+              part.text += chunk.delta;
+              inserted = true;
+              break;
+            }
+          }
+          if (!inserted) {
+            message.content.push({
+              type: 'text',
+              text: chunk.delta,
+            });
+          }
+        }
+        break;
+    }
+
+  }
+
+  return complete;
+
+};
 
 export const ParseSegmentGPT: NewSegmentParser = (opts: NewSegmentOpts, json: string[]) => {
+
+  let complete = false;
+
   if (json.length) {
     const chunk = JSON.parse(json.join('')) as OpenAI.Chat.Completions.ChatCompletionChunk; 
     //console.info("GPT CHUNK ID", chunk.id);
@@ -101,12 +223,18 @@ export const ParseSegmentGPT: NewSegmentParser = (opts: NewSegmentOpts, json: st
     
     if (choice.finish_reason) {
       message.complete = true;
+      complete = true;
     }
 
   }
+
+  return complete;
+
 };
 
 export const ParseSegmentGemini: NewSegmentParser = (opts: NewSegmentOpts, json: string[]) => {
+
+  let complete = false;
 
   if (json.length) {
     const chunk = JSON.parse(json.join('')) as GeminiResponseChunk;
@@ -196,9 +324,12 @@ export const ParseSegmentGemini: NewSegmentParser = (opts: NewSegmentOpts, json:
     if (candidate?.finishReason === 'STOP') {
       // console.info("GEMINI MESSAGE COMPLETE");
       message.complete = true;
+      complete = true;
     }
     
   }
+
+  return complete;
 
 };
 
@@ -208,26 +339,28 @@ export const ParseSegmentGemini: NewSegmentParser = (opts: NewSegmentOpts, json:
  */
 export const ParseSegmentAnthropic: NewSegmentParser = (opts: NewSegmentOpts, json: string[]) => {
 
+  let complete = false;
+
   // console.info("PSA");
 
   if (json.length) {
 
     // console.info(JSON.stringify(json, undefined, 2));
 
-    try {
+    // try {
       const chunk = JSON.parse(json.join('')) as Anthropic.Messages.RawMessageStreamEvent;
       let message = typeof opts.current_message_index === 'number' ? opts.messages[opts.current_message_index] as AssistantChatMessage : undefined;
 
       switch (chunk.type) {
 
         case 'message_stop':
-          // console.info(`(message stop)`);
 
           if (!message) {
             throw new Error('message stop with no current message');
           }
 
           message.complete = true;
+          complete = true;
           message = undefined;
           opts.current_message_index = undefined;
 
@@ -314,6 +447,9 @@ export const ParseSegmentAnthropic: NewSegmentParser = (opts: NewSegmentOpts, js
             const block = message.content[chunk.index];
 
             if (block?.type === 'tool_use') {
+
+              console.info('update');
+
               block.input += json;
             }
             else {
@@ -327,10 +463,13 @@ export const ParseSegmentAnthropic: NewSegmentParser = (opts: NewSegmentOpts, js
 
       }
 
-    }
-    catch (err) {
-      console.error(err);
-    }
+    //}
+    //catch (err) {
+    //  console.error(err);
+    //}
+    
   }
+
+  return complete;
 
 };
