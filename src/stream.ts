@@ -16,6 +16,71 @@ interface Params {
   timeout?: number;
 }
 
+// dev [TODO: flag]
+const chunks: unknown[][] = [];
+if (typeof self !== 'undefined') {
+  (self as any).chunks = chunks;
+}
+let current_chunks: unknown[] = [];
+
+/**
+ * dev support function
+ */
+export const ReplayStream = async (messages: unknown[], params: { messages: ChatMessage[] }) => {
+
+  const opts: NewSegmentOpts = {
+    model_name: 'replay',
+    messages: params.messages,
+  };
+
+  let message_stack: MessageType[] = [];
+  let process_timeout = 0;
+  let complete = false;
+
+  const ProcessStack = () => {
+    const temp = [...message_stack];
+    message_stack = [];
+    for (const message of temp) {
+      switch (message?.type) {
+        case 'openai-responses-chunk':
+          complete = complete || ParseSegmentResponses(opts, [JSON.stringify(message.chunk)]);
+          break;
+
+        case 'openai-chunk':
+          complete = complete || ParseSegmentGPT(opts, [JSON.stringify(message.chunk)]);
+          break;
+
+        case 'gemini-chunk':
+          complete = complete || ParseSegmentGemini(opts, [JSON.stringify(message.chunk)]);
+          break;
+
+        case 'anthropic-chunk':
+          complete = complete || ParseSegmentAnthropic(opts, [JSON.stringify(message.chunk)]);
+          break;
+      }
+    }
+  };
+
+  let index = 0;
+  while (index < messages.length) {
+    
+    message_stack.push(messages[index++] as MessageType);
+
+    if (!process_timeout) {
+      process_timeout = window.setTimeout(() => {
+        process_timeout = 0;
+        ProcessStack();
+      }, 100);
+    }
+
+    await new Promise<void>(resolve_timeout => {
+      setTimeout(() => resolve_timeout(), Math.round(Math.random() * 50))
+    });
+
+  }
+
+};
+
 export const Stream = async (params: Params) => {
 
   if (!params.api_key) {
@@ -38,6 +103,10 @@ export const Stream = async (params: Params) => {
   };
   
   if (params.worker) {
+
+    // dev
+    current_chunks = [];
+    chunks.push(current_chunks);
 
     /*
     const Timeout = () => {
@@ -78,62 +147,63 @@ export const Stream = async (params: Params) => {
           case 'anthropic-chunk':
             complete = complete || ParseSegmentAnthropic(opts, [JSON.stringify(message.chunk)]);
             break;
-          }
         }
+      }
+    };
+
+    await new Promise<void>(resolve => {
+
+      worker_instance.onmessage = (event: MessageEvent) => {
+    
+        /*
+        // console.info(event);
+  
+        if (timeout) {
+
+          // we're clearing the timeout when it starts to respond,
+          // but is it guaranteed to finish? not sure. at least the 
+          // problem we were trying to solve at the time was the service
+          // never responding (was deepseek)
+
+          console.info("clearing timeout on first rx");
+          window.clearTimeout(timeout);
+          timeout = 0;
+        }
+        */
+
+        const message = event.data as MessageType;
+        if (message.type === 'error') {
+          params.messages.push({
+            uuid: crypto.randomUUID(),
+            role: 'error',
+            message: message.text || 'Unknown error',
+          });
+          resolve();
+          return;
+        }
+        
+        message_stack.push(message);
+        current_chunks.push(JSON.parse(JSON.stringify(message)));
+
+        if (!process_timeout) {
+          process_timeout = window.setTimeout(() => {
+            process_timeout = 0;
+            ProcessStack();
+            if (complete) {
+              resolve();
+            }
+          }, 100);
+        }
+    
       };
 
-      await new Promise<void>(resolve => {
+      worker_instance.postMessage(JSON.parse(JSON.stringify(message))); // remove any svelte wrappers
 
-        worker_instance.onmessage = (event: MessageEvent) => {
-      
-          /*
-          // console.info(event);
-    
-          if (timeout) {
-
-            // we're clearing the timeout when it starts to respond,
-            // but is it guaranteed to finish? not sure. at least the 
-            // problem we were trying to solve at the time was the service
-            // never responding (was deepseek)
-
-            console.info("clearing timeout on first rx");
-            window.clearTimeout(timeout);
-            timeout = 0;
-          }
-          */
-
-          const message = event.data as MessageType;
-          if (message.type === 'error') {
-            params.messages.push({
-              uuid: crypto.randomUUID(),
-              role: 'error',
-              message: message.text || 'Unknown error',
-            });
-            resolve();
-            return;
-          }
-          
-          message_stack.push(message);
-
-          if (!process_timeout) {
-            process_timeout = window.setTimeout(() => {
-              process_timeout = 0;
-              ProcessStack();
-              if (complete) {
-                resolve();
-              }
-            }, 100);
-          }
-      
-        };
-
-        worker_instance.postMessage(JSON.parse(JSON.stringify(message))); // remove any svelte wrappers
-
-      });
-    }
-    else {
-      throw new Error('worker not initialized');
-    }
+    });
+  }
+  else {
+    throw new Error('worker not initialized');
+  }
 
 };
     

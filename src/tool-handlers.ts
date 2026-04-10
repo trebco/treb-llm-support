@@ -11,7 +11,7 @@ import { parse as pj_parse } from 'partial-json';
 export interface ExternalUI {
 
   /** returns screenshot of current view, as b64-encoded data URI */
-  Screenshot: (sheet: EmbeddedSpreadsheet) => string;
+  Screenshot: (sheet: EmbeddedSpreadsheet) => Promise<string>;
 
 }
 
@@ -228,9 +228,10 @@ const handlers: ToolHandler = {
       formatted: sheet.GetRange(selection, { type: 'formatted' }),
     });
   },
-  get_screenshot(_sheet, ui, _input) {
+  async get_screenshot(_sheet, ui, _input) {
+    const image = await ui.Screenshot(_sheet);
     return { type: 'image', 
-      image_uri: ui.Screenshot(_sheet) || '',
+      image_uri: image || '',
       content: {
         active_sheet: _sheet.active_sheet,
         user_selection: _sheet.GetSelection(true),
