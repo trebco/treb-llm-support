@@ -6,10 +6,20 @@ import type { ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { FunctionTool, ToolSearchTool } from 'openai/resources/responses/responses';
 
 export type ToolDefinitionOptions = {
+
+  /** tool requires image support. this is not supported in the legacy openAI API */
   requires_image_support: boolean;
+
+  /** tool supports partial application, so we can run while streaming */
   supports_partial_application: boolean;
+
+  /** 
+   * priority is used for deferred loading and tool search; we might also
+   * use it to limit the toolset for models that don't support tool search
+   */
   priority: 'high' | 'low';
-}
+
+};
 
 export type ToolDefinition = {
   name: string;
