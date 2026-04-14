@@ -404,6 +404,15 @@ const ConditionalFormatSchema = v.object({
   ),
 });
 
+const ListConditionalFormatsSchema = v.object({
+  sheet: v.optional(
+    v.pipe(
+      v.string(),
+      v.description('Sheet name. If omitted, uses the active sheet.'),
+    ),
+  ),
+});
+
 // --- Tools array ---
 
 export const tools = [
@@ -512,6 +521,12 @@ export const tools = [
     'conditional_format',
     'Apply conditional formatting to a range of cells. Supported types: "color_scale" (gradient fill based on cell values, with presets like "red-green"), "data_bars" (in-cell bar visualization), "highlight_cells" (apply a style when a per-cell condition like "> 100" matches), "duplicate_values" (highlight duplicate or unique values), "clear" (remove conditional formats — note: this removes entire format objects that overlap the range, not just the intersection).',
     ConditionalFormatSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'list_conditional_formats',
+    'List conditional formats on a sheet (defaults to the active sheet). Returns an array of format objects that mirror the "conditional_format" tool input shape, so you can see how existing formats are configured and reproduce or modify them. Notes: (1) conditional formats cannot be updated in place — to modify, use "clear" and recreate; (2) "color_scale" formats are returned with raw gradient stops even when created from a preset (the preset name cannot be recovered from the stored format); (3) the "expression" type may appear in output but is not currently creatable via the "conditional_format" tool.',
+    ListConditionalFormatsSchema,
     { priority: 'low' },
   ),
 ] as const satisfies ToolDefinition[];
@@ -669,6 +684,7 @@ export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   unmerge_cells: UnmergeCellsSchema,
   add_chart: AddChartSchema,
   conditional_format: ConditionalFormatSchema,
+  list_conditional_formats: ListConditionalFormatsSchema,
 };
 
 export type ToolInputMap = {
@@ -690,4 +706,5 @@ export type ToolInputMap = {
   unmerge_cells: v.InferInput<typeof UnmergeCellsSchema>;
   add_chart: v.InferInput<typeof AddChartSchema>;
   conditional_format: v.InferInput<typeof ConditionalFormatSchema>;
+  list_conditional_formats: v.InferInput<typeof ListConditionalFormatsSchema>;
 };

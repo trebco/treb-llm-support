@@ -430,6 +430,12 @@ export declare class EmbeddedSpreadsheet<USER_DATA_TYPE = unknown> {
     ExternalEditor(config?: Partial<ExternalEditorConfig>): void;
 
     /**
+     * list conditional formats. uses the active sheet by default, or pass a
+     * sheet name or id.
+     */
+    ListConditionalFormats(sheet?: number | string): ConditionalFormatType[];
+
+    /**
      * @internalRemarks removing internal flag
      */
     ConditionalFormatDuplicateValues(range: RangeReference | undefined, options: ConditionalFormatDuplicateValuesOptions): ConditionalFormat;
@@ -709,7 +715,7 @@ export declare class EmbeddedSpreadsheet<USER_DATA_TYPE = unknown> {
      * @public
      */
     UnmergeCells(range?: RangeReference): void;
-    Screenshot(type: 'png' | 'webp' | 'jpeg' | undefined, quality?: number | undefined, download?: boolean): string | undefined;
+    Screenshot(type: 'png' | 'webp' | 'jpeg' | undefined, quality?: number | undefined, download?: boolean): Promise<string | undefined>;
 
     /**
      * revert to the network version of this document, if `local_storage`
@@ -1312,6 +1318,9 @@ export interface ConditionalFormatDuplicateValuesOptions {
     unique?: boolean;
 }
 
+/** composite conditional format type */
+export type ConditionalFormatType = ConditionalFormatDuplicateValues | ConditionalFormatExpression | ConditionalFormatCellMatch | ConditionalFormatGradient | ConditionalFormatDataBar;
+
 /**
  * union, plus we're adding a state used to track application.
  * that state is serialized if it's true.
@@ -1325,7 +1334,7 @@ export interface ConditionalFormatDuplicateValuesOptions {
 export type ConditionalFormat = {
     internal?: unknown;
     priority?: number;
-} & (ConditionalFormatDuplicateValues | ConditionalFormatExpression | ConditionalFormatCellMatch | ConditionalFormatGradient | ConditionalFormatDataBar);
+} & ConditionalFormatType;
 
 /**
  * conditional format predicated on an expression. if the expression

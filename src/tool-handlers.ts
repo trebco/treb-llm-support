@@ -3,7 +3,7 @@ import type { ToolCallContent, ToolResultContent } from './chat-message';
 import type { ToolInputMap, ToolName } from './tool-schema';
 import { toolSchemas, tools_map } from './tool-schema';
 import * as v from 'valibot';
-import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants } from './treb';
+import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType } from './treb';
 import { SummarizeSpreadsheet } from './support-functions';
 import { parse as pj_parse } from 'partial-json';
 
@@ -113,6 +113,60 @@ function inputToCellStyle(input: NonNullable<ToolInputMap['set_cells']['styles']
   if (input.indent !== undefined) style.indent = input.indent;
   if (input.locked !== undefined) style.locked = input.locked;
   return style;
+}
+
+// --- Conditional format serialization ---
+
+function serializeConditionalFormat(sheet: EmbeddedSpreadsheet, format: ConditionalFormatType): Record<string, unknown> {
+  const reference = sheet.Unresolve(format.area, true);
+  switch (format.type) {
+    case 'gradient': {
+      const out: Record<string, unknown> = {
+        type: 'color_scale',
+        reference,
+        stops: format.stops?.map((s) => ({ value: s.value, color: serializeColor(s.color) })),
+      };
+      if (format.property !== undefined) out.property = format.property;
+      if (format.min !== undefined) out.min = format.min;
+      if (format.max !== undefined) out.max = format.max;
+      return out;
+    }
+    case 'data-bar': {
+      const out: Record<string, unknown> = {
+        type: 'data_bars',
+        reference,
+        color: serializeColor(format.fill),
+      };
+      if (format.negative !== undefined) out.negative_color = serializeColor(format.negative);
+      if (format.hide_values !== undefined) out.hide_values = format.hide_values;
+      if (format.min !== undefined) out.min = format.min;
+      if (format.max !== undefined) out.max = format.max;
+      return out;
+    }
+    case 'cell-match':
+      return {
+        type: 'highlight_cells',
+        reference,
+        expression: format.expression,
+        style: serializeStyle(format.style),
+      };
+    case 'duplicate-values': {
+      const out: Record<string, unknown> = {
+        type: 'duplicate_values',
+        reference,
+        style: serializeStyle(format.style),
+      };
+      if (format.unique !== undefined) out.unique = format.unique;
+      return out;
+    }
+    case 'expression':
+      return {
+        type: 'expression',
+        reference,
+        expression: format.expression,
+        style: serializeStyle(format.style),
+      };
+  }
 }
 
 /** Convert a column label (e.g. "A"→0, "B"→1, "AA"→26) to a 0-based index. */
@@ -306,6 +360,10 @@ const handlers: ToolHandler = {
         break;
     }
     return WrapContent({});
+  },
+  list_conditional_formats(sheet, _ui, input) {
+    const formats = sheet.ListConditionalFormats(input.sheet);
+    return WrapContent({ formats: formats.map((f) => serializeConditionalFormat(sheet, f)) });
   },
 };
 
