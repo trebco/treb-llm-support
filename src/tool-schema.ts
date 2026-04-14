@@ -289,7 +289,7 @@ const ChartSeriesSchema = v.object({
 
 const AddChartSchema = v.object({
   chart_type: v.pipe(
-    v.picklist(['line', 'column', 'bar', 'scatter', 'pie', 'donut', 'area']),
+    v.picklist(['line', 'column', 'bar', 'scatter', 'donut', 'area']),
     v.description('The type of chart to create.'),
   ),
   series: v.pipe(
@@ -413,6 +413,15 @@ const ListConditionalFormatsSchema = v.object({
   ),
 });
 
+const ListAnnotationsSchema = v.object({
+  sheet: v.optional(
+    v.pipe(
+      v.string(),
+      v.description('Sheet name. If omitted, uses the active sheet.'),
+    ),
+  ),
+});
+
 // --- Tools array ---
 
 export const tools = [
@@ -527,6 +536,12 @@ export const tools = [
     'list_conditional_formats',
     'List conditional formats on a sheet (defaults to the active sheet). Returns an array of format objects that mirror the "conditional_format" tool input shape, so you can see how existing formats are configured and reproduce or modify them. Notes: (1) conditional formats cannot be updated in place — to modify, use "clear" and recreate; (2) "color_scale" formats are returned with raw gradient stops even when created from a preset (the preset name cannot be recovered from the stored format); (3) the "expression" type may appear in output but is not currently creatable via the "conditional_format" tool.',
     ListConditionalFormatsSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'list_annotations',
+    'List annotations (charts, images, textboxes) on a sheet (defaults to the active sheet). Returns each annotation with an "id" that identifies it for later operations such as delete or move. The id is stable for the current spreadsheet session only — it will not survive closing and reopening the file.',
+    ListAnnotationsSchema,
     { priority: 'low' },
   ),
 ] as const satisfies ToolDefinition[];
@@ -685,6 +700,7 @@ export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   add_chart: AddChartSchema,
   conditional_format: ConditionalFormatSchema,
   list_conditional_formats: ListConditionalFormatsSchema,
+  list_annotations: ListAnnotationsSchema,
 };
 
 export type ToolInputMap = {
@@ -707,4 +723,5 @@ export type ToolInputMap = {
   add_chart: v.InferInput<typeof AddChartSchema>;
   conditional_format: v.InferInput<typeof ConditionalFormatSchema>;
   list_conditional_formats: v.InferInput<typeof ListConditionalFormatsSchema>;
+  list_annotations: v.InferInput<typeof ListAnnotationsSchema>;
 };

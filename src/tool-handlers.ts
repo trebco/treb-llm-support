@@ -218,6 +218,72 @@ const WrapContent = (content: unknown): ToolHandlerGenericResposneType => ({
   content,
 });
 
+/** support function for charts */
+function ComposeSeries(series: { values: string, labels?: string, title?: string}) {
+
+  // series function:
+  // =Series(title, X, Y, Z, index, subtype, labels, axis)
+
+  if (!series.labels && !series.title) {
+    return series.values;
+  }
+  return `Series(${series.title ? `"${series.title}"` : ''},, ${series.values},,,, ${series.labels || ''})`;
+}
+
+/**
+ * handler for add_chart tool
+ */
+function AddChart(sheet: EmbeddedSpreadsheet, _ui: ExternalUI, input: Parameters<ToolHandler['add_chart']>[2]) {
+
+  let fn = '';
+  if (input.chart_type === 'scatter') {
+
+    // special handling for scatter plot
+
+    const series = Array.isArray(input.series) ? input.series[0] : input.series;
+    const title = input.title || series.title || '';
+    const data = `Series(${series.title ? `"${series.title}"` : ''}, ${series.labels || ''}, ${series.values})`;
+
+    fn = `=Scatter.Plot(${data}, ${input.title ? `"${input.title}"` : ''})`;
+    
+  }
+  else if (input.chart_type === 'donut') {
+
+    // special handling for donut chart
+
+    const series = Array.isArray(input.series) ? input.series[0] : input.series;
+    const title = input.title || series.title || '';
+    fn = `=Donut.Chart(${series.values},${series.labels || ''}, ${title ? `"${title}"` : ''})`;
+  }
+  else {
+
+    // multiple series must be enclosed in a Group() function
+    const data = (Array.isArray(input.series)) ? 
+      `Group(` + input.series.map(ComposeSeries).join(', ') + `)` : ComposeSeries(input.series);
+
+    // for labels, use first series
+    let labels = '';
+    if (Array.isArray(input.series)) {
+      labels = input.series[0].labels || '';
+    }
+    else {
+      labels = input.series.labels || '';
+    }
+
+    fn = `=${input.chart_type}.chart(${data},${labels},${input.title ? `"${input.title}"` : ''})`;
+  }
+
+  // console.info('fn', fn);
+
+  if (fn) {
+    sheet.InsertAnnotation(fn, 'treb-chart', input.position, { argument_separator: ','});
+    return WrapContent({});
+  }
+
+  return WrapContent({ error: 'unknown error' });
+
+}
+
 const handlers: ToolHandler = {
   get_cells: GetCellHandler,
   list_sheets(sheet, _ui, _input) {
@@ -308,11 +374,7 @@ const handlers: ToolHandler = {
     sheet.UnmergeCells(input.reference);
     return WrapContent({});
   },
-  add_chart(sheet, _ui, input) {
-    // TODO: build formula from input.chart_type, input.series, input.title
-    // and call sheet.InsertAnnotation(formula, 'treb-chart', position, ',')
-    return WrapContent({});
-  },
+  add_chart: AddChart,
   update_layout(sheet, _ui, input) {
     const count = input.count ?? 1;
     // Schema declares 1-based indices; the spreadsheet API uses 0-based.
@@ -364,6 +426,20 @@ const handlers: ToolHandler = {
   list_conditional_formats(sheet, _ui, input) {
     const formats = sheet.ListConditionalFormats(input.sheet);
     return WrapContent({ formats: formats.map((f) => serializeConditionalFormat(sheet, f)) });
+  },
+  list_annotations(sheet, _ui, input) {
+    const annotations = sheet.ListAnnotations(input.sheet);
+    // TODO: stubbed — real implementation should:
+    //   - reverse chart formulas (e.g. `line.chart(...)`) back into the
+    //     `add_chart` tool's input shape (chart_type, series, title, position)
+    //   - strip image `data.src` (full data URI — expensive and not useful in LLM context)
+    //   - serialize textbox content and external annotation data appropriately
+    return WrapContent({
+      annotations: annotations.map((a) => ({
+        id: a.id,
+        type: a.type,
+      })),
+    });
   },
 };
 

@@ -1,4 +1,4 @@
-/*! API v37.3. Copyright 2018-2026 trebco, llc. All rights reserved. LGPL: https://treb.app/license */
+/*! API v37.4. Copyright 2018-2026 trebco, llc. All rights reserved. LGPL: https://treb.app/license */
 /*
  * This file is part of TREB.
  *
@@ -428,6 +428,17 @@ export declare class EmbeddedSpreadsheet<USER_DATA_TYPE = unknown> {
      * responding to selection.
      */
     ExternalEditor(config?: Partial<ExternalEditorConfig>): void;
+
+    /**
+     * method to list annotations in the spreadsheet, including internal id
+     * (handle). the id is per-session, so it will be consistent as long as the
+     * spreadsheet is open (and the annotation exists).
+     *
+     * @param sheet - sheet name or ID. omit to use the active sheet
+     */
+    ListAnnotations(sheet?: number | string): (Partial<AnnotationData> & {
+        id: string;
+    })[];
 
     /**
      * list conditional formats. uses the active sheet by default, or pass a
@@ -1539,9 +1550,116 @@ export interface SerializeOptions {
     export_functions?: boolean;
 }
 export type AnnotationType = 'treb-chart' | 'image' | 'textbox' | 'external';
-export interface Point {
-    x: number;
-    y: number;
+export type AnnotationData = AnnotationChartData | AnnotationImageData | AnnotationExternalData | AnnotationTextBoxData;
+export interface ImageSize {
+    width: number;
+    height: number;
+}
+export interface ImageAnnotationData {
+    src: string;
+
+    /**/
+    scale?: string;
+    original_size?: ImageSize;
+}
+
+/**
+ * splitting persisted data from the annotation class. that class might
+ * disappear in the future in favor of just a type. this interface should
+ * fully match the old Partial<Annotation> we used before. note that we
+ * used to define values for all members, but they may now be undefined
+ * because the Annotation class as a Partial instance of this data.
+ *
+ * conceptually annotation was originally intended to support types other
+ * than our own charts and images, but no one ever used it. so we could
+ * lock down the `type` field if we wanted to. or perhaps have an `external`
+ * type with opaque data. TODO.
+ *
+ */
+export interface AnnotationDataBase {
+
+    /** the new layout, persisted and takes preference over the old one */
+    layout?: AnnotationLayout;
+
+    /**
+     * adding cell style as a convenient store for font stack; atm we are
+     * ignoring everything but the font_face attribute
+     */
+    style?: CellStyle;
+
+    /**
+     * the old layout used rectangles, and we need to keep support for
+     * that. this is not the layout rectangle. this rectangle is just
+     * for serialization/deserialization. the actual rectangle is maintained
+     * in the Annotation class.
+     */
+    rect?: Partial<IRectangle>;
+
+    /** annotation can be resized. this is advisory, for UI */
+    resizable: boolean;
+
+    /** annotation can be moved. this is advisory, for UI */
+    movable: boolean;
+
+    /** annotation can be removed/deleted. this is advisory, for UI */
+    removable: boolean;
+
+    /** annotation can be selected. this is advisory, for UI */
+    selectable: boolean;
+
+    /** move when resizing/inserting rows/columns */
+    move_with_cells: boolean;
+
+    /** resize when resizing/inserting rows/columns */
+    resize_with_cells: boolean;
+
+    /**
+     * optional formula. the formula will be updated on structure events
+     * (insert/delete row/column).
+     */
+    formula: string;
+
+    /**
+     * extent, useful for exporting. we could probably serialize this,
+     * just be sure to clear it when layout changes so it will be
+     * recalculated.
+     *
+     * the idea is to know the bottom/right row/column of the annotation,
+     * so when we preserve/restore the sheet we don't trim those rows/columns.
+     * they don't need any data, but it just looks bad. we can do this
+     * dynamically but since it won't change all that often, we might
+     * as well precalculate.
+     */
+    extent: ICellAddress;
+}
+export interface AnnotationImageData extends AnnotationDataBase {
+    type: 'image';
+    data: ImageAnnotationData;
+}
+export interface AnnotationChartData extends AnnotationDataBase {
+    type: 'treb-chart';
+}
+export interface AnnotationTextBoxData extends AnnotationDataBase {
+    type: 'textbox';
+
+    /**
+     * @internalRemarks
+     * what's with this weird structure? did we inherit it? can we clean it up?
+     */
+    data: {
+        style?: CellStyle;
+        paragraphs: {
+            style?: CellStyle;
+            content: {
+                text: string;
+                style?: CellStyle;
+            }[];
+        }[];
+    };
+}
+export interface AnnotationExternalData extends AnnotationDataBase {
+    type: 'external';
+    data: Record<string, string>;
 }
 
 /** structure represents rectangle coordinates */
@@ -1550,6 +1668,34 @@ export interface IRectangle {
     left: number;
     width: number;
     height: number;
+}
+
+/**
+ * represents the layout of an annotation, reference to the sheet
+ */
+export interface AnnotationLayout {
+    tl: Corner;
+    br: Corner;
+}
+
+/**
+ * offset from corner, as % of cell
+ */
+export interface AddressOffset {
+    x: number;
+    y: number;
+}
+
+/**
+ * represents one corner of a layout rectangle
+ */
+export interface Corner {
+    address: ICellAddress;
+    offset: AddressOffset;
+}
+export interface Point {
+    x: number;
+    y: number;
 }
 export type CellValue = undefined | string | number | boolean | Complex | DimensionedQuantity;
 
@@ -2043,141 +2189,6 @@ export interface SerializedGridSelection {
 
     /** for cacheing addtional selections. optimally don't serialize */
     rendered?: boolean;
-}
-export type AnnotationData = AnnotationChartData | AnnotationImageData | AnnotationExternalData | AnnotationTextBoxData;
-export interface ImageSize {
-    width: number;
-    height: number;
-}
-export interface ImageAnnotationData {
-    src: string;
-
-    /**/
-    scale?: string;
-    original_size?: ImageSize;
-}
-
-/**
- * splitting persisted data from the annotation class. that class might
- * disappear in the future in favor of just a type. this interface should
- * fully match the old Partial<Annotation> we used before. note that we
- * used to define values for all members, but they may now be undefined
- * because the Annotation class as a Partial instance of this data.
- *
- * conceptually annotation was originally intended to support types other
- * than our own charts and images, but no one ever used it. so we could
- * lock down the `type` field if we wanted to. or perhaps have an `external`
- * type with opaque data. TODO.
- *
- */
-export interface AnnotationDataBase {
-
-    /** the new layout, persisted and takes preference over the old one */
-    layout?: AnnotationLayout;
-
-    /**
-     * adding cell style as a convenient store for font stack; atm we are
-     * ignoring everything but the font_face attribute
-     */
-    style?: CellStyle;
-
-    /**
-     * the old layout used rectangles, and we need to keep support for
-     * that. this is not the layout rectangle. this rectangle is just
-     * for serialization/deserialization. the actual rectangle is maintained
-     * in the Annotation class.
-     */
-    rect?: Partial<IRectangle>;
-
-    /** annotation can be resized. this is advisory, for UI */
-    resizable: boolean;
-
-    /** annotation can be moved. this is advisory, for UI */
-    movable: boolean;
-
-    /** annotation can be removed/deleted. this is advisory, for UI */
-    removable: boolean;
-
-    /** annotation can be selected. this is advisory, for UI */
-    selectable: boolean;
-
-    /** move when resizing/inserting rows/columns */
-    move_with_cells: boolean;
-
-    /** resize when resizing/inserting rows/columns */
-    resize_with_cells: boolean;
-
-    /**
-     * optional formula. the formula will be updated on structure events
-     * (insert/delete row/column).
-     */
-    formula: string;
-
-    /**
-     * extent, useful for exporting. we could probably serialize this,
-     * just be sure to clear it when layout changes so it will be
-     * recalculated.
-     *
-     * the idea is to know the bottom/right row/column of the annotation,
-     * so when we preserve/restore the sheet we don't trim those rows/columns.
-     * they don't need any data, but it just looks bad. we can do this
-     * dynamically but since it won't change all that often, we might
-     * as well precalculate.
-     */
-    extent: ICellAddress;
-}
-export interface AnnotationImageData extends AnnotationDataBase {
-    type: 'image';
-    data: ImageAnnotationData;
-}
-export interface AnnotationChartData extends AnnotationDataBase {
-    type: 'treb-chart';
-}
-export interface AnnotationTextBoxData extends AnnotationDataBase {
-    type: 'textbox';
-
-    /**
-     * @internalRemarks
-     * what's with this weird structure? did we inherit it? can we clean it up?
-     */
-    data: {
-        style?: CellStyle;
-        paragraphs: {
-            style?: CellStyle;
-            content: {
-                text: string;
-                style?: CellStyle;
-            }[];
-        }[];
-    };
-}
-export interface AnnotationExternalData extends AnnotationDataBase {
-    type: 'external';
-    data: Record<string, string>;
-}
-
-/**
- * represents the layout of an annotation, reference to the sheet
- */
-export interface AnnotationLayout {
-    tl: Corner;
-    br: Corner;
-}
-
-/**
- * offset from corner, as % of cell
- */
-export interface AddressOffset {
-    x: number;
-    y: number;
-}
-
-/**
- * represents one corner of a layout rectangle
- */
-export interface Corner {
-    address: ICellAddress;
-    offset: AddressOffset;
 }
 export interface SerializedMacroFunction {
     name: string;
