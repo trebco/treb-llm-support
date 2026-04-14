@@ -285,7 +285,7 @@ const handlers: ToolHandler = {
         sheet.ConditionalFormatGradient(input.reference, input.preset ?? 'green-red');
         break;
       case 'data_bars':
-        sheet.ConditionalFormatDataBars(input.reference, { fill: parseColor(input.color ?? '#4472C4') });
+        sheet.ConditionalFormatDataBars(input.reference, { fill: parseColor(input.color ?? '#4472C4'), hide_values: input.hide_values });
         break;
       case 'highlight_cells': {
         const style = input.style ? inputToCellStyle(input.style) : defaultStyle;

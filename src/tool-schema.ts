@@ -396,6 +396,12 @@ const ConditionalFormatSchema = v.object({
       v.description('Highlight unique values instead of duplicates. Only for type "duplicate_values". Defaults to false.'),
     ),
   ),
+  hide_values: v.optional(
+    v.pipe(
+      v.boolean(),
+      v.description('Hide cell values and show only the data bars. Only for type "data_bars". Defaults to false.'),
+    ),
+  ),
 });
 
 // --- Tools array ---
@@ -504,7 +510,7 @@ export const tools = [
   ),
   defineTool(
     'conditional_format',
-    'Apply conditional formatting to a range of cells. Supported types: "color_scale" (gradient fill based on cell values, with presets like "red-green"), "data_bars" (in-cell bar visualization), "highlight_cells" (apply a style when a per-cell condition like "> 100" matches), "duplicate_values" (highlight duplicate or unique values), "clear" (remove all conditional formats from the range).',
+    'Apply conditional formatting to a range of cells. Supported types: "color_scale" (gradient fill based on cell values, with presets like "red-green"), "data_bars" (in-cell bar visualization), "highlight_cells" (apply a style when a per-cell condition like "> 100" matches), "duplicate_values" (highlight duplicate or unique values), "clear" (remove conditional formats — note: this removes entire format objects that overlap the range, not just the intersection).',
     ConditionalFormatSchema,
     { priority: 'low' },
   ),
