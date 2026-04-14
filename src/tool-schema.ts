@@ -268,6 +268,51 @@ const UnmergeCellsSchema = v.object({
   reference: v.pipe(v.string(), v.description('Range reference to unmerge (e.g. "A1:C1", "Sheet1!A1:A5").')),
 });
 
+const ChartSeriesSchema = v.object({
+  values: v.pipe(
+    v.string(),
+    v.description('Cell range reference for the data values (e.g. "B1:B10", "Sheet1!B1:B10").'),
+  ),
+  labels: v.optional(
+    v.pipe(
+      v.string(),
+      v.description('Cell range reference for category/axis labels (e.g. "A1:A10"). If omitted in a multi-series chart, inherits the labels from the first series that defines them.'),
+    ),
+  ),
+  title: v.optional(
+    v.pipe(
+      v.string(),
+      v.description('Series name, shown in the chart legend.'),
+    ),
+  ),
+});
+
+const AddChartSchema = v.object({
+  chart_type: v.pipe(
+    v.picklist(['line', 'column', 'bar', 'scatter', 'pie', 'donut', 'area']),
+    v.description('The type of chart to create.'),
+  ),
+  series: v.pipe(
+    v.union([
+      ChartSeriesSchema,
+      v.array(ChartSeriesSchema),
+    ]),
+    v.description('One or more data series. A single series object or an array of series objects.'),
+  ),
+  title: v.optional(
+    v.pipe(
+      v.string(),
+      v.description('Chart title displayed above the chart.'),
+    ),
+  ),
+  position: v.optional(
+    v.pipe(
+      v.string(),
+      v.description('Range reference for chart placement (e.g. "E1:J15"). The chart fills the area from the top-left of the first cell to the bottom-right of the last cell. If omitted, the chart is auto-placed.'),
+    ),
+  ),
+});
+
 const EvaluateSchema = v.object({
   expression: v.pipe(
     v.string(),
@@ -308,6 +353,47 @@ const UpdateLayoutSchema = v.object({
     v.pipe(
       v.number(),
       v.description('Row height for set_row_height. Omit to auto-size rows to fit content.'),
+    ),
+  ),
+});
+
+const ConditionalFormatSchema = v.object({
+  type: v.pipe(
+    v.picklist(['color_scale', 'data_bars', 'highlight_cells', 'duplicate_values', 'clear']),
+    v.description('The type of conditional format to apply.'),
+  ),
+  reference: v.pipe(
+    v.string(),
+    v.description('Range reference to apply conditional formatting to (e.g. "A1:A20", "Sheet1!B2:D10").'),
+  ),
+  preset: v.optional(
+    v.pipe(
+      v.picklist(['red-green', 'green-red', 'red-yellow-green', 'green-yellow-red']),
+      v.description('Color scale preset. Only for type "color_scale". Defaults to "green-red".'),
+    ),
+  ),
+  color: v.optional(
+    v.pipe(
+      v.string(),
+      v.description('Bar fill color (e.g. "#4472C4", "steelblue", "theme:Accent"). Only for type "data_bars". Defaults to "#4472C4".'),
+    ),
+  ),
+  expression: v.optional(
+    v.pipe(
+      v.string(),
+      v.description('Condition applied per-cell in the range (e.g. "> 100", "= 0", "< 0"). Only for type "highlight_cells".'),
+    ),
+  ),
+  style: v.optional(
+    v.pipe(
+      StyleObject,
+      v.description('Style to apply when the condition is met. Only for types "highlight_cells" and "duplicate_values". Defaults to light-red fill with dark-red text.'),
+    ),
+  ),
+  unique: v.optional(
+    v.pipe(
+      v.boolean(),
+      v.description('Highlight unique values instead of duplicates. Only for type "duplicate_values". Defaults to false.'),
     ),
   ),
 });
@@ -408,6 +494,18 @@ export const tools = [
     'unmerge_cells',
     'Unmerge a previously merged range of cells.',
     UnmergeCellsSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'add_chart',
+    'Insert a chart into the spreadsheet. Specify the chart type, one or more data series with cell range references, and an optional title. For multiple series sharing the same category labels, only the first series needs to specify labels -- subsequent series inherit them.',
+    AddChartSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'conditional_format',
+    'Apply conditional formatting to a range of cells. Supported types: "color_scale" (gradient fill based on cell values, with presets like "red-green"), "data_bars" (in-cell bar visualization), "highlight_cells" (apply a style when a per-cell condition like "> 100" matches), "duplicate_values" (highlight duplicate or unique values), "clear" (remove all conditional formats from the range).',
+    ConditionalFormatSchema,
     { priority: 'low' },
   ),
 ] as const satisfies ToolDefinition[];
@@ -563,6 +661,8 @@ export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   delete_sheet: DeleteSheetSchema,
   merge_cells: MergeCellsSchema,
   unmerge_cells: UnmergeCellsSchema,
+  add_chart: AddChartSchema,
+  conditional_format: ConditionalFormatSchema,
 };
 
 export type ToolInputMap = {
@@ -582,4 +682,6 @@ export type ToolInputMap = {
   delete_sheet: v.InferInput<typeof DeleteSheetSchema>;
   merge_cells: v.InferInput<typeof MergeCellsSchema>;
   unmerge_cells: v.InferInput<typeof UnmergeCellsSchema>;
+  add_chart: v.InferInput<typeof AddChartSchema>;
+  conditional_format: v.InferInput<typeof ConditionalFormatSchema>;
 };

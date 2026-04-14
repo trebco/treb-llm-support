@@ -254,6 +254,11 @@ const handlers: ToolHandler = {
     sheet.UnmergeCells(input.reference);
     return WrapContent({});
   },
+  add_chart(sheet, _ui, input) {
+    // TODO: build formula from input.chart_type, input.series, input.title
+    // and call sheet.InsertAnnotation(formula, 'treb-chart', position, ',')
+    return WrapContent({});
+  },
   update_layout(sheet, _ui, input) {
     const count = input.count ?? 1;
     // Schema declares 1-based indices; the spreadsheet API uses 0-based.
@@ -267,6 +272,38 @@ const handlers: ToolHandler = {
       case 'delete_columns':   sheet.DeleteColumns(index0 as number, count); break;
       case 'set_column_width': sheet.SetColumnWidth(index0, input.width); break;
       case 'set_row_height':   sheet.SetRowHeight(index0, input.height); break;
+    }
+    return WrapContent({});
+  },
+  conditional_format(sheet, _ui, input) {
+    const defaultStyle: CellStyle = {
+      fill: parseColor('#FFC7CE'),
+      text: parseColor('#9C0006'),
+    };
+    switch (input.type) {
+      case 'color_scale':
+        sheet.ConditionalFormatGradient(input.reference, input.preset ?? 'green-red');
+        break;
+      case 'data_bars':
+        sheet.ConditionalFormatDataBars(input.reference, { fill: parseColor(input.color ?? '#4472C4') });
+        break;
+      case 'highlight_cells': {
+        const style = input.style ? inputToCellStyle(input.style) : defaultStyle;
+        sheet.ConditionalFormatCellMatch(input.reference, {
+          style,
+          expression: input.expression ?? '',
+          options: { argument_separator: ',' },
+        });
+        break;
+      }
+      case 'duplicate_values': {
+        const style = input.style ? inputToCellStyle(input.style) : defaultStyle;
+        sheet.ConditionalFormatDuplicateValues(input.reference, { style, unique: input.unique });
+        break;
+      }
+      case 'clear':
+        sheet.RemoveConditionalFormats(input.reference);
+        break;
     }
     return WrapContent({});
   },
