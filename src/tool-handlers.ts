@@ -3,7 +3,7 @@ import type { ToolCallContent, ToolResultContent } from './chat-message';
 import type { ToolInputMap, ToolName } from './tool-schema';
 import { toolSchemas, tools_map } from './tool-schema';
 import * as v from 'valibot';
-import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType } from './treb';
+import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType, AnnotationData } from './treb';
 import { SummarizeSpreadsheet } from './support-functions';
 import { parse as pj_parse } from 'partial-json';
 
@@ -218,6 +218,50 @@ const WrapContent = (content: unknown): ToolHandlerGenericResposneType => ({
   content,
 });
 
+function ListAnnotations(sheet: EmbeddedSpreadsheet, _ui: ExternalUI, input: Parameters<ToolHandler['list_annotations']>[2]) {
+
+  
+  const annotations1 = sheet.ListAnnotations(input?.sheet).filter((test): test is Exclude<AnnotationData, { type: 'external' }> & {id: string} => test.type !== 'external') ;
+
+
+
+  // start by filtering out "external" or unknown types
+  const annotations = sheet.ListAnnotations(input?.sheet).filter(test => test.type !== 'external').map(annotation => {
+
+    switch (annotation.type) {
+      case 'textbox':
+        break;
+
+      case 'image':
+        break;
+
+      case 'treb-chart':
+        break;
+
+
+    }
+    return annotation;
+
+  });
+
+
+  // TODO: stubbed — real implementation should:
+  //   - reverse chart formulas (e.g. `line.chart(...)`) back into the
+  //     `add_chart` tool's input shape (chart_type, series, title, position)
+  //   - strip image `data.src` (full data URI — expensive and not useful in LLM context)
+  //   - serialize textbox content and external annotation data appropriately
+  return WrapContent(annotations.map((a) => ({
+      id: a.id,
+      type: a.type,
+    })),
+  );
+
+}
+
+if (typeof self !== 'undefined') {
+  (self as any).ListAnnotations = ListAnnotations;
+}
+
 /** support function for charts */
 function ComposeSeries(series: { values: string, labels?: string, title?: string}) {
 
@@ -427,20 +471,7 @@ const handlers: ToolHandler = {
     const formats = sheet.ListConditionalFormats(input.sheet);
     return WrapContent({ formats: formats.map((f) => serializeConditionalFormat(sheet, f)) });
   },
-  list_annotations(sheet, _ui, input) {
-    const annotations = sheet.ListAnnotations(input.sheet);
-    // TODO: stubbed — real implementation should:
-    //   - reverse chart formulas (e.g. `line.chart(...)`) back into the
-    //     `add_chart` tool's input shape (chart_type, series, title, position)
-    //   - strip image `data.src` (full data URI — expensive and not useful in LLM context)
-    //   - serialize textbox content and external annotation data appropriately
-    return WrapContent({
-      annotations: annotations.map((a) => ({
-        id: a.id,
-        type: a.type,
-      })),
-    });
-  },
+  list_annotations: ListAnnotations,
 };
 
 /**
