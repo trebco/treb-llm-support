@@ -1,5 +1,9 @@
 
-import type { BaseCellData, CellValue, EmbeddedSpreadsheet, NestedColumnData, NestedRowData, SerializedCellData } from './treb';
+import type { AnnotationChartData, AnnotationData, 
+    AnnotationLayout, BaseCellData, CellValue, 
+    EmbeddedSpreadsheet, NestedColumnData, NestedRowData, SerializedCellData } from '@trebco/treb';
+
+import { type ExpressionUnit, type Parser } from '@trebco/treb/treb-parser';
 
 /** type check for serialized data type */
 function IsNestedRowData(test: SerializedCellData): test is NestedRowData[] {
@@ -28,7 +32,7 @@ function ColumnLabel(c: number): string {
 }
 
 /** convert row and column (both 0-based) to a spreadsheet address, e.g. B3 */
-function AddressLabel(address: {row: number, column: number}): string {
+export function AddressLabel(address: {row: number, column: number}): string {
   return ColumnLabel(address.column) + (address.row + 1);
 }
 
@@ -53,6 +57,150 @@ type CellSummary = {
   value: CellDataType|CellValue;
   row: number;
   column: number;
+}
+
+
+interface RenderedLayoutCorner {
+  cell: string;
+  offset_percent?: { x: number, y: number };
+}
+
+function RenderLayout(sheet: EmbeddedSpreadsheet, layout: AnnotationLayout) {
+
+  const top_left: RenderedLayoutCorner = {
+    cell: AddressLabel(layout.tl.address),
+    offset_percent: layout.tl.offset,
+  };
+
+  const bottom_right: RenderedLayoutCorner = {
+    cell: AddressLabel(layout.br.address),
+    offset_percent: layout.br.offset,
+  };
+
+  return {
+    top_left, bottom_right 
+  };
+
+}
+
+interface SeriesType {
+  values: string;
+  labels?: string;
+  y_values?: string; 
+  title?: string;
+}
+
+function UnpackSeriesTail(type: string, parser: Parser, expr: ExpressionUnit): SeriesType {
+  if (expr.type === 'call') {
+    const name = expr.name.toLowerCase();
+    if (name === 'series') {
+
+      // series function:
+      // =Series(title, X, Y, Z, index, subtype, labels, axis)
+
+      const series: SeriesType = {
+        values: parser.Render(expr.args[1]),
+      };
+      if (expr.args[0] && expr.args[0].type !== 'missing') {
+        series.title = parser.Render(expr.args[0]);
+      }
+      if (type === 'scatter.plot') {
+        if (expr.args[2] && expr.args[2].type !== 'missing') {
+          series.y_values = parser.Render(expr.args[2]);
+        }
+      }
+      else {
+        if (expr.args[6] && expr.args[6].type !== 'missing') {
+          series.labels = parser.Render(expr.args[6]);
+        }
+      }
+      return series;
+    }
+  }
+  return {
+    values: parser.Render(expr),
+  };
+}
+
+function UnpackSeries(type: string, parser: Parser, expr: ExpressionUnit): SeriesType|SeriesType[] {
+  if (expr.type === 'call') {
+    const name = expr.name.toLowerCase();
+    if (name === 'group') {
+      return expr.args.map(arg => UnpackSeriesTail(type, parser, arg));
+    }
+  }
+  return UnpackSeriesTail(type, parser, expr);
+}
+
+interface UnpackedChart {
+  type: string;
+  title: string;
+  labels: string;
+  series: SeriesType|SeriesType[];
+}
+
+function UnpackChart(sheet: EmbeddedSpreadsheet, annotation: AnnotationChartData & {id: string}) {
+  if (annotation.formula) {
+    const parser = (sheet as any).parser as Parser;
+    parser.Save();
+    parser.SetLocaleSettings('.' as any);
+    const data: Partial<UnpackedChart> = {};
+    const parse_result = parser.Parse(annotation.formula);
+    if (parse_result.expression && parse_result.expression.type === 'call') {
+      const fn = parse_result.expression.name.toLowerCase();
+      const args = parse_result.expression.args;
+
+      data.series = UnpackSeries(fn, parser, args[0]);
+
+      switch(fn) {
+
+        case 'scatter.plot':
+          data.title = args[1] ? parser.Render(args[1]) : undefined;
+          break;
+
+        default:
+          if (args[1] && args[1].type !== 'missing') {
+            data.labels = parser.Render(args[1]);
+          }
+          data.title = args[2] ? parser.Render(args[2]) : undefined;
+          break;
+      }
+
+      data.type = fn;
+    }
+    parser.Restore();
+    return data;
+  }
+  return {};
+}
+
+export function ListAnnotations(sheet: EmbeddedSpreadsheet, sheet_name?: string) {
+
+  const annotations = sheet.ListAnnotations(sheet_name).filter((test): test is Exclude<AnnotationData, { type: 'external' }> & {id: string} => test.type !== 'external').map(item => {
+
+    if (item.type === 'treb-chart') {
+      const chart = UnpackChart(sheet, item);
+      return {
+        id: item.id,
+        type: item.type,
+        layout: item.layout ? RenderLayout(sheet, item.layout) : undefined,
+        ...chart,
+      }
+    }
+
+    return {
+      id: item.id,
+      type: item.type,
+      layout: item.layout ? RenderLayout(sheet, item.layout) : undefined,
+    }
+  });
+
+  return annotations;
+
+}
+
+if (typeof self !== 'undefined') {
+  (self as any).ListAnnotations = ListAnnotations;
 }
 
 /** 
@@ -183,10 +331,11 @@ export function SummarizeSpreadsheet(sheet: EmbeddedSpreadsheet, sheets?: string
 
   const summary: {
     [key: string]: {
-      visibility?: 'hidden';
+      sheet_visibility?: 'hidden';
       cells: {
         [label: string]: CellValue|CellDataType;
       }
+      annotations?: any; // type TODO
     }
   } = {};
 
@@ -239,8 +388,13 @@ export function SummarizeSpreadsheet(sheet: EmbeddedSpreadsheet, sheets?: string
     }
 
     if (page.visible === false) {
-      sheet_summary.visibility = 'hidden';
+      sheet_summary.sheet_visibility = 'hidden';
     }
+    const annotations = ListAnnotations(sheet, name);
+    if (annotations.length) {
+      sheet_summary.annotations = annotations;
+    }
+
     for (const cell of cells) {
       if (cell.value !== undefined) {
         if (IsCellDataType(cell.value)) {

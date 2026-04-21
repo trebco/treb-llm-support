@@ -33,7 +33,6 @@ Uses **bun** as the package manager (not npm). There is no build step -- consume
 | `models.ts` | Model/provider registry with per-model cost info |
 | `md.ts` | Markdown rendering (markdown-it + highlight.js + KaTeX) for displaying LLM responses |
 | `parse.ts` | Custom JSON parser that handles duplicate keys (ChatGPT quirk) and comments |
-| `treb.d.ts` | Type declarations for the TREB spreadsheet API (external dependency) |
 
 ## Conventions
 

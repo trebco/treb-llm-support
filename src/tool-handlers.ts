@@ -3,8 +3,8 @@ import type { ToolCallContent, ToolResultContent } from './chat-message';
 import type { ToolInputMap, ToolName } from './tool-schema';
 import { toolSchemas, tools_map } from './tool-schema';
 import * as v from 'valibot';
-import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType, AnnotationData } from './treb';
-import { SummarizeSpreadsheet } from './support-functions';
+import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType, AnnotationData, AnnotationLayout } from '@trebco/treb';
+import { AddressLabel, ListAnnotations, SummarizeSpreadsheet } from './support-functions';
 import { parse as pj_parse } from 'partial-json';
 
 /** placeholder */
@@ -213,54 +213,10 @@ function GetCellHandler(sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolI
 
 }
 
-const WrapContent = (content: unknown): ToolHandlerGenericResposneType => ({
+const ToolResult = (content: unknown): ToolHandlerGenericResposneType => ({
   type: 'object',
   content,
 });
-
-function ListAnnotations(sheet: EmbeddedSpreadsheet, _ui: ExternalUI, input: Parameters<ToolHandler['list_annotations']>[2]) {
-
-  
-  const annotations1 = sheet.ListAnnotations(input?.sheet).filter((test): test is Exclude<AnnotationData, { type: 'external' }> & {id: string} => test.type !== 'external') ;
-
-
-
-  // start by filtering out "external" or unknown types
-  const annotations = sheet.ListAnnotations(input?.sheet).filter(test => test.type !== 'external').map(annotation => {
-
-    switch (annotation.type) {
-      case 'textbox':
-        break;
-
-      case 'image':
-        break;
-
-      case 'treb-chart':
-        break;
-
-
-    }
-    return annotation;
-
-  });
-
-
-  // TODO: stubbed — real implementation should:
-  //   - reverse chart formulas (e.g. `line.chart(...)`) back into the
-  //     `add_chart` tool's input shape (chart_type, series, title, position)
-  //   - strip image `data.src` (full data URI — expensive and not useful in LLM context)
-  //   - serialize textbox content and external annotation data appropriately
-  return WrapContent(annotations.map((a) => ({
-      id: a.id,
-      type: a.type,
-    })),
-  );
-
-}
-
-if (typeof self !== 'undefined') {
-  (self as any).ListAnnotations = ListAnnotations;
-}
 
 /** support function for charts */
 function ComposeSeries(series: { values: string, labels?: string, title?: string}) {
@@ -321,25 +277,25 @@ function AddChart(sheet: EmbeddedSpreadsheet, _ui: ExternalUI, input: Parameters
 
   if (fn) {
     sheet.InsertAnnotation(fn, 'treb-chart', input.position, { argument_separator: ','});
-    return WrapContent({});
+    return ToolResult({});
   }
 
-  return WrapContent({ error: 'unknown error' });
+  return ToolResult({ error: 'unknown error' });
 
 }
 
 const handlers: ToolHandler = {
   get_cells: GetCellHandler,
   list_sheets(sheet, _ui, _input) {
-    return WrapContent({ sheets: sheet.ListSheets() });
+    return ToolResult({ sheets: sheet.ListSheets() });
   },
   activate_sheet(sheet, ui, input) {
     sheet.ActivateSheet(input.name);
-    return WrapContent({});
+    return ToolResult({});
   },
   add_sheet(sheet, ui, input) {
     sheet.AddSheet(input.name);
-    return WrapContent({});
+    return ToolResult({});
   },
   set_cells(sheet, ui, input) {
     if (input.values) {
@@ -362,30 +318,30 @@ const handlers: ToolHandler = {
       const indices = input.auto_resize_columns.map(columnLabelToIndex);
       sheet.SetColumnWidth(indices, undefined, false);
     }
-    return WrapContent({});
+    return ToolResult({});
   },
   get_style(sheet, ui, input) {
     const result = sheet.GetStyle(input.reference, true);
-    if (!result) return WrapContent({});
+    if (!result) return ToolResult({});
     if (Array.isArray(result)) {
-      return WrapContent({ style: result.map((row) => row.map(serializeStyle)) });
+      return ToolResult({ style: result.map((row) => row.map(serializeStyle)) });
     }
-    return WrapContent({ style: serializeStyle(result) });
+    return ToolResult({ style: serializeStyle(result) });
   },
   async get_spreadsheet(sheet, _ui, input) {
-    return WrapContent(SummarizeSpreadsheet(sheet, input.sheets));
+    return ToolResult(SummarizeSpreadsheet(sheet, input.sheets));
   },
   evaluate(sheet, _ui, input) {
-    return WrapContent(sheet.Evaluate(input.expression, { argument_separator: ',' }));
+    return ToolResult(sheet.Evaluate(input.expression, { argument_separator: ',' }));
   },
   select(sheet, _ui, input) {
     sheet.Select(input.reference);
-    return WrapContent({});
+    return ToolResult({});
   },
   get_selection(sheet, _ui, _input) {
     const selection = sheet.GetSelection(true);
-    if (!selection) return WrapContent({ selection: '' });
-    return WrapContent({
+    if (!selection) return ToolResult({ selection: '' });
+    return ToolResult({
       selection,
       values: sheet.GetRange(selection),
       formulas: sheet.GetRange(selection, { type: 'formula' }),
@@ -404,19 +360,19 @@ const handlers: ToolHandler = {
   },
   rename_sheet(sheet, _ui, input) {
     sheet.RenameSheet(input.name, input.new_name);
-    return WrapContent({});
+    return ToolResult({});
   },
   delete_sheet(sheet, _ui, input) {
     sheet.DeleteSheet(input.name);
-    return WrapContent({});
+    return ToolResult({});
   },
   merge_cells(sheet, _ui, input) {
     sheet.MergeCells(input.reference);
-    return WrapContent({});
+    return ToolResult({});
   },
   unmerge_cells(sheet, _ui, input) {
     sheet.UnmergeCells(input.reference);
-    return WrapContent({});
+    return ToolResult({});
   },
   add_chart: AddChart,
   update_layout(sheet, _ui, input) {
@@ -433,7 +389,7 @@ const handlers: ToolHandler = {
       case 'set_column_width': sheet.SetColumnWidth(index0, input.width); break;
       case 'set_row_height':   sheet.SetRowHeight(index0, input.height); break;
     }
-    return WrapContent({});
+    return ToolResult({});
   },
   conditional_format(sheet, _ui, input) {
     const defaultStyle: CellStyle = {
@@ -465,13 +421,28 @@ const handlers: ToolHandler = {
         sheet.RemoveConditionalFormats(input.reference);
         break;
     }
-    return WrapContent({});
+    return ToolResult({});
   },
   list_conditional_formats(sheet, _ui, input) {
     const formats = sheet.ListConditionalFormats(input.sheet);
-    return WrapContent({ formats: formats.map((f) => serializeConditionalFormat(sheet, f)) });
+    return ToolResult({ formats: formats.map((f) => serializeConditionalFormat(sheet, f)) });
   },
-  list_annotations: ListAnnotations,
+  list_annotations(sheet, _ui, input) {
+    return ToolResult(ListAnnotations(sheet, input.sheet));
+  },
+  move_annotation(sheet, _ui, input) {
+    sheet.MoveAnnotation(input.id, input.position);
+    return ToolResult({});
+  },
+  delete_annotation(sheet, _ui, input) {
+    sheet.DeleteAnnotation(input.id);
+    return ToolResult({});
+  },
+  reorder_annotation(sheet, _ui, input) {
+    const translated = input.action === 'to_back' ? 'bottom' : 'top';
+    sheet.AnnotationZOrder(input.id, translated);
+    return ToolResult({});
+  },
 };
 
 /**

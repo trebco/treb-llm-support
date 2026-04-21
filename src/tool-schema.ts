@@ -422,6 +422,35 @@ const ListAnnotationsSchema = v.object({
   ),
 });
 
+const MoveAnnotationSchema = v.object({
+  id: v.pipe(
+    v.string(),
+    v.description('Annotation id (from list_annotations).'),
+  ),
+  position: v.pipe(
+    v.string(),
+    v.description('Range reference for the new placement (e.g. "E1:J15"). The annotation fills the area from the top-left of the first cell to the bottom-right of the last cell.'),
+  ),
+});
+
+const DeleteAnnotationSchema = v.object({
+  id: v.pipe(
+    v.string(),
+    v.description('Annotation id (from list_annotations).'),
+  ),
+});
+
+const ReorderAnnotationSchema = v.object({
+  id: v.pipe(
+    v.string(),
+    v.description('Annotation id (from list_annotations).'),
+  ),
+  action: v.pipe(
+    v.picklist(['to_front', 'to_back']),
+    v.description('Move the annotation to the front (top) or back (bottom) of the z-order.'),
+  ),
+});
+
 // --- Tools array ---
 
 export const tools = [
@@ -542,6 +571,24 @@ export const tools = [
     'list_annotations',
     'List annotations (charts, images, textboxes) on a sheet (defaults to the active sheet). Returns each annotation with an "id" that identifies it for later operations such as delete or move. The id is stable for the current spreadsheet session only — it will not survive closing and reopening the file.',
     ListAnnotationsSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'move_annotation',
+    'Move or resize an annotation (chart, image, textbox) by setting a new position. Use list_annotations to get the annotation id.',
+    MoveAnnotationSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'delete_annotation',
+    'Delete an annotation (chart, image, textbox). Use list_annotations to get the annotation id.',
+    DeleteAnnotationSchema,
+    { priority: 'low' },
+  ),
+  defineTool(
+    'reorder_annotation',
+    'Change the z-order of an annotation (chart, image, textbox). Move it to the front or back of the stacking order. Use list_annotations to get the annotation id.',
+    ReorderAnnotationSchema,
     { priority: 'low' },
   ),
 ] as const satisfies ToolDefinition[];
@@ -701,6 +748,9 @@ export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   conditional_format: ConditionalFormatSchema,
   list_conditional_formats: ListConditionalFormatsSchema,
   list_annotations: ListAnnotationsSchema,
+  move_annotation: MoveAnnotationSchema,
+  delete_annotation: DeleteAnnotationSchema,
+  reorder_annotation: ReorderAnnotationSchema,
 };
 
 export type ToolInputMap = {
@@ -724,4 +774,7 @@ export type ToolInputMap = {
   conditional_format: v.InferInput<typeof ConditionalFormatSchema>;
   list_conditional_formats: v.InferInput<typeof ListConditionalFormatsSchema>;
   list_annotations: v.InferInput<typeof ListAnnotationsSchema>;
+  move_annotation: v.InferInput<typeof MoveAnnotationSchema>;
+  delete_annotation: v.InferInput<typeof DeleteAnnotationSchema>;
+  reorder_annotation: v.InferInput<typeof ReorderAnnotationSchema>;
 };
