@@ -12,7 +12,8 @@ import { ToolDefinition } from './tool-schema';
 const DEFAULT_MAX_TOKENS = 8192;
 
 let kimi: OpenAI|undefined;
-let deepseek: OpenAI|undefined;
+// let deepseek: OpenAI|undefined;
+let deepseek: Anthropic|undefined;
 let openai: OpenAI|undefined;
 let anthropic: Anthropic|undefined;
 let together: OpenAI|undefined;
@@ -88,6 +89,17 @@ const Init = async (message: InitMessage) => {
       instance = anthropic;
       break;
 
+    case 'Deepseek':
+      if (!deepseek || deepseek.apiKey !== message.key) {
+        deepseek = new Anthropic({
+          apiKey: message.key,
+          baseURL: 'https://api.deepseek.com/anthropic',
+          dangerouslyAllowBrowser: true,
+        });
+      }
+      instance = deepseek;
+      break;
+
     case 'Together':
       if (!together || together.apiKey !== message.key) {
         together = new OpenAI({
@@ -121,6 +133,7 @@ const Init = async (message: InitMessage) => {
       instance = kimi;
       break;
 
+    /*
     case 'Deepseek':
       if (!deepseek || deepseek.apiKey !== message.key) {
         deepseek = new OpenAI({
@@ -131,6 +144,7 @@ const Init = async (message: InitMessage) => {
       }
       instance = deepseek;
       break;
+      */
 
     case 'OpenAI':
       if (!openai || openai.apiKey !== message.key) {

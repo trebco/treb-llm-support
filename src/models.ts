@@ -92,6 +92,7 @@ export interface Model<T = unknown> {
 
 const list: Model[] = [
 
+  /*
   {
     label: 'DeepSeek-V3.2',
     name: 'deepseek-chat',
@@ -101,6 +102,26 @@ const list: Model[] = [
       output: 0.42,
     },
   },
+  */
+  {
+    label: 'DeepSeek V4 Flash',
+    name: 'deepseek-v4-flash',
+    provider: deepseek_provider,
+    cost: {
+      input: 0.14,
+      output: 0.28,
+    },
+  },
+  {
+    label: 'DeepSeek V4 Pro',
+    name: 'deepseek-v4-pro',
+    provider: deepseek_provider,
+    cost: {
+      input: 1.74,
+      output: 3.48,
+    },
+  },
+
   {
     label: 'Gemini 3.1 Flash Lite (preview)',
     name: 'gemini-3.1-flash-lite-preview',
