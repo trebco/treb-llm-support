@@ -1,6 +1,5 @@
 
-import type { ChatMessage } from './chat-message';
-import { StreamAnthropicResponse, StreamGeminiResponse, StreamGPTResponse, StreamResponsesAPI } from './llm';
+import { StreamAnthropicResponse, StreamGeminiResponse, /* StreamGPTResponse, */ StreamResponsesAPI } from './llm';
 
 import { Anthropic } from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
@@ -22,17 +21,6 @@ let openrouter: OpenAI|undefined;
 let gemini: GoogleGenAI|undefined;
 
 export interface InitMessage {
-  type: 'init';
-  model: Model;
-  messages: ChatMessage[];
-  system_prompt: string;
-  key: string;
-  temperature?: number;
-  thinking_budget?: number;
-  tools?: ToolDefinition[];
-}
-
-export interface InitMessage2 {
   type: 'init2';
   model: Model;
   messages: TypedChatMessages,
@@ -74,7 +62,7 @@ export interface ErrorMessage {
 }
 
 export type MessageType = 
-  InitMessage2 | 
+  InitMessage | 
   ErrorMessage | 
   OpenAIChunkMessage | 
   AnthropicChunkMessage | 
@@ -86,7 +74,7 @@ const Post = (message: MessageType) => {
   postMessage(message);  
 }
 
-const Init = async (message: InitMessage2) => {
+const Init = async (message: InitMessage) => {
 
   let instance: Anthropic|OpenAI|GoogleGenAI|undefined;
   let openai_legacy_api = true;

@@ -29,6 +29,7 @@ export type ToolDefinitionOptions = {
 
 export type ToolDefinition = {
   name: string;
+  schema: v.GenericSchema,
   description: string;
   options?: Partial<ToolDefinitionOptions>;
   input_schema: {
@@ -39,7 +40,7 @@ export type ToolDefinition = {
   };
 };
 
-function defineTool<
+export function defineTool<
   N extends string,
   S extends v.GenericSchema,
 >(
@@ -47,10 +48,11 @@ function defineTool<
   description: string,
   schema: S,
   options?: Partial<ToolDefinitionOptions>,
-): ToolDefinition & { name: N } {
+): ToolDefinition & { name: N, schema: S } {
   const { $schema, ...jsonSchema } = toJsonSchema(schema);
   return {
     name,
+    schema,
     description,
     options,
     input_schema: jsonSchema as ToolDefinition['input_schema'],
@@ -733,6 +735,10 @@ function applyStrictConstraints(node: JsonSchemaNode): boolean {
   return true;
 }
 
+/*
+
+moved into tool definition
+
 export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   get_cells: GetCellsSchema,
   set_cells: SetCellsSchema,
@@ -758,6 +764,7 @@ export const toolSchemas: { [K in ToolName]: v.GenericSchema } = {
   delete_annotation: DeleteAnnotationSchema,
   reorder_annotation: ReorderAnnotationSchema,
 };
+*/
 
 export type ToolInputMap = {
   get_cells: v.InferInput<typeof GetCellsSchema>;

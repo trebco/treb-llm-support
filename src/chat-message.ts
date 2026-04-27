@@ -1,17 +1,12 @@
 
 import type { ToolHandlerResponseType } from './tool-handlers';
 
-export interface GeminiOptionalContent {
-  /** gemini-specific field */
-  thoughtSignature?: string;
-}
-
-export interface TextContent extends GeminiOptionalContent {
+export interface TextContent {
   type: 'text';
   text: string;
 }
 
-export interface ToolCallContent extends GeminiOptionalContent {
+export interface ToolCallContent {
   type: 'tool_use';
   input: any;
   name: string;
@@ -32,26 +27,3 @@ export interface ToolResultContent {
   call_id?: string;
   content: ToolHandlerResponseType;
 }
-
-export type AssistantChatMessage = {
-  uuid: string;
-  role: 'assistant';
-  content: (TextContent|ToolCallContent)[];
-  complete?: boolean;
-  tool_calls_processed?: boolean;
-  generator: string;
-}
-
-export type UserChatMessage = {
-  uuid: string;
-  role: 'user';
-  content: string|ToolResultContent[];
-}
-
-export type ErrorChatMessage = {
-  uuid: string;
-  role: 'error';
-  message?: string;
-};
-
-export type ChatMessage = UserChatMessage | AssistantChatMessage | ErrorChatMessage;

@@ -2,7 +2,6 @@
 import { Anthropic } from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenAI, type GenerateContentParameters, type Content as GeminiContent } from '@google/genai';
-import type { AssistantChatMessage, ChatMessage, UserChatMessage } from './chat-message';
 import { ToolDefinition, toAnthropicTools, toGeminiFunctionDeclarations, toOpenAIChatCompletionTools, toOpenAIResponsesTools } from './tool-schema';
 import { ToolHandlerImageResponseType, ToolHandlerResponseType } from './tool-handlers';
 import { AnthropicChatMessages, ClientSideErrorMessage, GeminiChatMessages, GPTResponsesChatMessages, IsClientSideErrorMessage, IsNotClientSideErrorMessage } from './stream2';
@@ -102,11 +101,11 @@ export async function* StreamResponsesAPI(instance: OpenAI, model: string, messa
 
 }
 
-/**
+/* *
  * this is the "legacy" OpenAI API, using the chat completions API.
  * it does not support tool calls returning images, so we need to 
  * filter out the screenshot tool.
- */
+ * /
 export async function* StreamGPTResponse(instance: OpenAI, model: string, messages: ChatMessage[], system: string, temperature: number|undefined, max_tokens: number, tools?: ToolDefinition[]) {
 
   const openai_messages: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming['messages'] = [];
@@ -183,13 +182,13 @@ export async function* StreamGPTResponse(instance: OpenAI, model: string, messag
 
   // console.info({openai_messages});
 
-  /*
+  / *
   const filtered = messages.filter(test => test.role === 'assistant' || test.role === 'user');
   openai_messages.push(...filtered.map(message => ({ 
     role: message.role, 
     content: message.text,
   })));
-  */
+  * /
 
   const options: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
     model,
@@ -216,7 +215,7 @@ export async function* StreamGPTResponse(instance: OpenAI, model: string, messag
 
 
 }
-
+*/
 
 export async function* StreamGeminiResponse(
     instance: GoogleGenAI, 
