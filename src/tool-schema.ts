@@ -7,7 +7,13 @@ import type { FunctionTool, ToolSearchTool } from 'openai/resources/responses/re
 
 export type ToolDefinitionOptions = {
 
-  /** tool requires image support. this is not supported in the legacy openAI API */
+  /** 
+   * tool requires image support. this is not supported in the legacy 
+   * openAI API (chat completions). 
+   * 
+   * it's apparently not supported by deepseek either, even if you use the 
+   * Anthropic API. that's a disappointment.
+   */
   requires_image_support: boolean;
 
   /** tool supports partial application, so we can run while streaming */

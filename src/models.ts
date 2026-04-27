@@ -1,47 +1,72 @@
 
+export interface ModelFeatures {
+  image_support_in_tools: boolean;
+  tool_search: boolean;
+}
+
 export interface Provider {
   name: string;
   website: string;
+  default_features: Partial<ModelFeatures>;
+  api: 'anthropic'|'gemini'|'openai-responses'|'openai-chat-completion';
 }
 
 export const deepseek_provider: Provider = {
   name: 'Deepseek',
   website: 'https://platform.deepseek.com',
+  default_features: {},
+  api: 'anthropic',
 };
 
 export const togheterai_provider: Provider = {
   name: 'TogetherAI',
   website: 'https://api.together.ai',
+  default_features: {},
+  api: 'openai-chat-completion',
 };
 
 export const openai_provider: Provider = {
   name: 'OpenAI',
   website: 'https://openai.com/api',
+  default_features: {
+    image_support_in_tools: true,
+    tool_search: true,
+  },
+  api: 'openai-responses',
 };
 
 export const anthropic_provider: Provider = {
   name: 'Anthropic',
   website: 'https://console.anthropic.com',
+  default_features: {
+    image_support_in_tools: true,
+    tool_search: true,
+  },
+  api: 'anthropic',
 };
 
 export const gemini_provider: Provider = {
   name: 'Google',
   website: 'https://ai.google.dev/gemini-api',
+  default_features: {
+    image_support_in_tools: true,
+    tool_search: true,
+  },
+  api: 'gemini',
 };
 
 export const openrouter_provider: Provider = {
   name: 'OpenRouter',
   website: 'https://openrouter.ai',
+  default_features: {},
+  api: 'openai-chat-completion',
 };
 
 export const kimi_provider: Provider = {
   name: 'Kimi',
   website: 'https://platform.moonshot.ai',
-};
-
-export const default_provider: Provider = {
-  name: 'Default',
-  website: 'https://treb.app',
+  default_features: {},
+  api: 'openai-chat-completion',
 };
 
 export interface Model<T = unknown> {
@@ -88,9 +113,12 @@ export interface Model<T = unknown> {
   /** this only shows up in dev mode */
   dev?: boolean;
 
+  /** overrides the provider default, if necessary */
+  model_features?: Partial<ModelFeatures>;
+
 }
 
-const list: Model[] = [
+const list = [
 
   /*
   {
@@ -129,7 +157,7 @@ const list: Model[] = [
     cost: {
       input: 0.25,
       output: 1.50,
-    }
+    },
   },  
   {
     label: 'Gemini 3 Flash (preview)',
@@ -168,6 +196,24 @@ const list: Model[] = [
     },
   },
   {
+    label: 'Claude Opus 4.7',
+    name: 'claude-opus-4-7',
+    provider: anthropic_provider,
+    cost: {
+      input: 5.00,
+      output: 25.00,
+    },
+  },
+  {
+    label: 'GPT-5.5',
+    name: 'gpt-5.5',
+    provider: openai_provider,
+    cost: {
+      input: 5.00,
+      output: 30.00,
+    },
+  },
+  {
     label: 'GPT-5.4',
     name: 'gpt-5.4',
     provider: openai_provider,
@@ -186,6 +232,18 @@ const list: Model[] = [
     },
   },
 
-];
+] as const satisfies Model[];
 
+export type ModelName = typeof list[number]['name'];
 export const Models = list;
+
+export function FindModel(name: ModelName) {
+  for (const entry of list) {
+    if (entry.name === name) {
+      return entry;
+    }
+  }
+  return undefined;
+}
+
+

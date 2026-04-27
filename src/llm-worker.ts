@@ -8,6 +8,7 @@ import { GoogleGenAI, GenerateContentResponse as GeminiChunk } from '@google/gen
 
 import type { Model } from './models';
 import { ToolDefinition } from './tool-schema';
+import { TypedChatMessages } from './stream2';
 
 const DEFAULT_MAX_TOKENS = 8192;
 
@@ -30,6 +31,18 @@ export interface InitMessage {
   thinking_budget?: number;
   tools?: ToolDefinition[];
 }
+
+export interface InitMessage2 {
+  type: 'init2';
+  model: Model;
+  messages: TypedChatMessages,
+  system_prompt: string;
+  key: string;
+  temperature?: number;
+  thinking_budget?: number;
+  tools?: ToolDefinition[];
+}
+
 
 export interface GeminiChunkMessage {
   type: 'gemini-chunk';
@@ -61,7 +74,7 @@ export interface ErrorMessage {
 }
 
 export type MessageType = 
-  InitMessage | 
+  InitMessage2 | 
   ErrorMessage | 
   OpenAIChunkMessage | 
   AnthropicChunkMessage | 
@@ -73,7 +86,7 @@ const Post = (message: MessageType) => {
   postMessage(message);  
 }
 
-const Init = async (message: InitMessage) => {
+const Init = async (message: InitMessage2) => {
 
   let instance: Anthropic|OpenAI|GoogleGenAI|undefined;
   let openai_legacy_api = true;
@@ -181,14 +194,22 @@ const Init = async (message: InitMessage) => {
   try {
     if (instance instanceof OpenAI) {
       if (openai_legacy_api) {
+
+        throw new Error('ENOTIMPL');
+
+        /*
         for await (const chunk of StreamGPTResponse(instance, message.model.name, message.messages, message.system_prompt, message.temperature, DEFAULT_MAX_TOKENS, message.tools)) {
           Post({
             type: 'openai-chunk',
             chunk,
           });
         }
+        */
       }
       else {
+        if (message.messages.type !== 'openai-responses') {
+          throw new Error('invalid message type');
+        }
         for await (const chunk of StreamResponsesAPI(instance, message.model.name, message.messages, message.system_prompt, message.temperature, DEFAULT_MAX_TOKENS, message.tools)) {
           Post({
             type: 'openai-responses-chunk',
@@ -198,6 +219,9 @@ const Init = async (message: InitMessage) => {
       }
     }
     else if (instance instanceof GoogleGenAI) {
+      if (message.messages.type !== 'gemini') {
+        throw new Error('invalid message type');
+      }
       for await (const chunk of StreamGeminiResponse(instance, message.model.name, message.messages, message.system_prompt, message.temperature, DEFAULT_MAX_TOKENS, message.tools)) {
         Post({
           type: 'gemini-chunk',
@@ -206,6 +230,9 @@ const Init = async (message: InitMessage) => {
       }
     }
     else {
+      if (message.messages.type !== 'anthropic') {
+        throw new Error('invalid message type');
+      }
       for await (const chunk of StreamAnthropicResponse(instance, message.model.name, message.messages, message.system_prompt, message.temperature, DEFAULT_MAX_TOKENS, message.tools)) {
         Post({
           type: 'anthropic-chunk',
@@ -231,7 +258,7 @@ const Init = async (message: InitMessage) => {
 onmessage = (event: MessageEvent) => {
   const message = event.data as MessageType;
   switch (message.type) {
-    case 'init':
+    case 'init2':
       Init(message);
       break;
   }

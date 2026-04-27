@@ -5,6 +5,8 @@ import { GoogleGenAI, type GenerateContentParameters, type Content as GeminiCont
 import type { AssistantChatMessage, ChatMessage, UserChatMessage } from './chat-message';
 import { ToolDefinition, toAnthropicTools, toGeminiFunctionDeclarations, toOpenAIChatCompletionTools, toOpenAIResponsesTools } from './tool-schema';
 import { ToolHandlerImageResponseType, ToolHandlerResponseType } from './tool-handlers';
+import { AnthropicChatMessages, ClientSideErrorMessage, GeminiChatMessages, GPTResponsesChatMessages, IsClientSideErrorMessage, IsNotClientSideErrorMessage } from './stream2';
+import { MessageParam } from '@anthropic-ai/sdk/resources';
 
 /** helper function */
 function GenerateImageBlockContent(result: ToolHandlerImageResponseType): Anthropic.ToolResultBlockParam['content'] {
@@ -42,66 +44,26 @@ function GenerateImageBlockContent(result: ToolHandlerImageResponseType): Anthro
  * 
  * needs to be decoded client-side.
  */
-export async function* StreamAnthropicResponse(instance: Anthropic, model: string, messages: ChatMessage[], system: string, temperature: number|undefined, max_tokens: number, tools?: ToolDefinition[]) {
+export async function* StreamAnthropicResponse(
+    instance: Anthropic, 
+    model: string, 
+    // messages: ChatMessage[], 
+    messages: AnthropicChatMessages,
+    system: string, 
+    temperature: number|undefined, 
+    max_tokens: number, 
+    tools?: ToolDefinition[]) {
 
-  // remove system and error messages. we added a "name" field to
-  // tool responses for gemini, claude will complain if it sees that
-  // so remove if before sending
-
-  const filtered = messages.filter(test => test.role === 'assistant' || test.role === 'user').map(message => {
-    if (message.role === 'user') {  
-      if (Array.isArray(message.content)) {
-        const content: Anthropic.ToolResultBlockParam[] = [];
-        for (const entry of message.content) {
-          switch (entry.content.type) {
-            case 'error':
-              continue;
-            case 'object':
-              content.push({
-                tool_use_id: entry.tool_use_id,
-                type: entry.type,
-                content: JSON.stringify(entry.content),
-              });
-              break;
-            case 'image':
-               content.push({
-                tool_use_id: entry.tool_use_id,
-                type: entry.type,
-                content: GenerateImageBlockContent(entry.content),
-              });
-              break;
-          }
-        }
-        return {
-          role: message.role,
-          content,
-        }
-      }
-      return {
-        role: message.role,
-        content: message.content,
-      };
-    }
-
-    // when we were testing tool search/deferred loading, we were
-    // dropping some content blocks for tool search. I'm not sure
-    // if we need to preserve those or not. it makes sense, but 
-    // it doesn't map well onto our current structure where we 
-    // have our own base message type.
-
-    return {
-      role: message.role,
-      content: message.content.filter(test => !!test),
-    };
-  });
-
-  // console.info({filtered});
+  const filtered = messages.messages.filter(IsNotClientSideErrorMessage);
 
   const stream = await instance.messages.create({
     tools: tools ? toAnthropicTools(tools) : undefined,
     model,
     max_tokens,
-    messages: filtered,
+    messages: filtered.map(message => ({
+      content: message.content,
+      role: message.role,
+    })),
     system,
     temperature,
     stream: true,
@@ -110,10 +72,7 @@ export async function* StreamAnthropicResponse(instance: Anthropic, model: strin
     }
   });
 
-  // let counter = 0;
-
   for await (const chunk of stream) {
-    // console.info("anthropic-chunk", counter++, JSON.stringify(chunk, undefined, 2));
     yield chunk;
   }
 
@@ -123,81 +82,14 @@ export async function* StreamAnthropicResponse(instance: Anthropic, model: strin
  * for the time being, we'll use store:true (the default), although
  * I'm a little edgy about that
  */
-export async function* StreamResponsesAPI(instance: OpenAI, model: string, messages: ChatMessage[], system: string, temperature: number|undefined, max_tokens: number, tools?: ToolDefinition[]) {
+export async function* StreamResponsesAPI(instance: OpenAI, model: string, messages: GPTResponsesChatMessages, system: string, temperature: number|undefined, max_tokens: number, tools?: ToolDefinition[]) {
 
-  const input: OpenAI.Responses.ResponseInput = [];
-
-  for (const message of messages) {
-    switch (message.role) {
-      case 'user':
-        if (typeof message.content === 'string') {
-          input.push({
-            role: 'user',
-            content: message.content,
-          });
-        }
-        else {
-          for (const part of message.content) {
-            let output: string | OpenAI.Responses.ResponseFunctionCallOutputItemList = '';
-            switch (part.content.type) {
-              case 'object':
-                output = JSON.stringify(part.content.content);
-                break;
-              case 'error':
-                output = JSON.stringify(part.content);
-                break;
-              case 'image':
-                output = [{
-                    type: 'input_image',
-                    image_url: part.content.image_uri,
-                  }];
-                if (part.content.content) {
-                  output.push({
-                    type: 'input_text',
-                    text: JSON.stringify(part.content.content),
-                  });
-                }
-                break;
-            }
-            input.push({
-              type: 'function_call_output',
-              call_id: part.call_id || part.tool_use_id || '',
-              id: `fc_` + (message.uuid || ''),
-              output,
-            });
-          }
-        }
-        break;
-
-      case 'assistant':
-        {
-          for (const part of message.content) {
-            if (part.type === 'text') {
-              input.push({
-                role: 'assistant',
-                content: part.text,
-              });
-            }
-            else if (part.type === 'tool_use') {
-              input.push({
-                type: 'function_call',
-                arguments: JSON.stringify(part.input || ''),
-                call_id: part.call_id || '',
-                id: part.id || '',
-                name: part.name,
-              });
-            }
-          }
-        }
-        break;
-    }
-  }
-
-  console.info({input});
+  const filtered = messages.messages.filter(IsNotClientSideErrorMessage);
+  // console.info({filtered});
 
   const response = await instance.responses.create({
     model,
-    input,
+    input: filtered,
     stream: true,
     instructions: system,
     tools: tools ? toOpenAIResponsesTools(tools) : undefined,
@@ -326,113 +218,20 @@ export async function* StreamGPTResponse(instance: OpenAI, model: string, messag
 }
 
 
-export async function* StreamGeminiResponse(instance: GoogleGenAI, model: string, messages: ChatMessage[], system: string, temperature: number|undefined, max_tokens: number, tools?: ToolDefinition[]) {
+export async function* StreamGeminiResponse(
+    instance: GoogleGenAI, 
+    model: string, 
+    // messages: ChatMessage[], 
+    messages: GeminiChatMessages,
+    system: string, 
+    temperature: number|undefined, 
+    max_tokens: number, 
+    tools?: ToolDefinition[]) {
 
-  const filtered = messages.filter(test => test.role === 'assistant' || test.role === 'user');
 
-  const gemini_messages: GeminiContent[] = [];
+  const filtered = messages.messages.filter(IsNotClientSideErrorMessage);
 
-  for (const message of messages) {
-    if (message.role === 'user') {
-      if (typeof message.content === 'string') {
-        gemini_messages.push({
-          role: 'user',
-          parts: [{
-            text: message.content,
-          }],
-        });
-      }
-      else {
-        const gemini_message: GeminiContent = {
-          role: 'user',
-          parts: [],
-        };
-        for (const part of message.content) {
-          if (part.content.type === 'error') {
-            continue;
-          }
-          if (part.content.type === 'image') {
-
-            const [header, data] = part.content.image_uri.split(",");
-            const mimeType = header.match(/:(.*?);/)?.[1];
-
-            gemini_message.parts?.push({
-              functionResponse: {
-                name: part.name,
-                response: { content: part.content.content || {}},
-              },
-            }, {
-              inlineData: {
-                mimeType,
-                data,
-              },
-            });
-          }
-          else {
-            gemini_message.parts?.push({
-              functionResponse: {
-                name: part.name,
-                response: { content: part.content.content },
-              }
-            });
-          }
-
-          // tbis is backwards, but TOOD: stop stringifying content,
-          // we can stringify for claude when we send it
-
-          // let structured_content: any = '';
-
-          /*
-          if (typeof part.content === 'string') {
-            try {
-              structured_content = JSON.parse(part.content);
-            }
-            catch {
-              // ...
-            }
-          }
-          else {
-            structured_content = '(image omitted)';
-          }
-          */
-
-          /*
-          gemini_message.parts?.push({
-            functionResponse: {
-              name: part.name,
-              response: { content: structured_content },
-            }
-          })
-          */
-        }
-        gemini_messages.push(gemini_message);
-      }
-    }
-    else if (message.role === 'assistant') {
-      gemini_messages.push({
-        role: 'model',
-        parts: message.content.map(part => {
-          if (part.type === 'tool_use') {
-            return {
-              functionCall: {
-                name: part.name,
-                args: part.input,
-              },
-              thoughtSignature: part.thoughtSignature,
-            }
-          }
-          else { // if (part.type === 'text') {
-            return {
-              text: part.text,
-              thoughtSignature: part.thoughtSignature,
-            };
-          }
-        }),
-      });
-    }
-  }
-
-  console.info("GM", {gemini_messages});
+  // console.info("GM", {filtered});
 
   const params: GenerateContentParameters = {
     model,
@@ -456,8 +255,10 @@ export async function* StreamGeminiResponse(instance: GoogleGenAI, model: string
         functionDeclarations: toGeminiFunctionDeclarations(tools),
       }] : undefined,
     },
-    contents: gemini_messages, 
+    contents: filtered, 
   };
+
+  // console.info({params});
 
   /*
   if (typeof thinking_budget === 'number') {
@@ -472,8 +273,7 @@ export async function* StreamGeminiResponse(instance: GoogleGenAI, model: string
   const stream = await instance.models.generateContentStream(params);
 
   for await (const chunk of stream) {
-    // console.info("GEMINI CHUNK", JSON.stringify(chunk, undefined, 2));
-    yield chunk; // JSON.stringify(chunk);
+    yield chunk;
   }
 
 };
