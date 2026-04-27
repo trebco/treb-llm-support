@@ -456,11 +456,31 @@ const handlers: ToolHandler = {
  * @param ui - supplied function interface for ui interactions
  * @param content - the content block
  * @param partial - content is not complete, but apply partial evaluation.
- * if this flag is set (1) we don't modify the message, and (2) we don't 
+ * if this flag is set (1) we don't modify the message, and (2) we don't
  * validate. we just do a best-efforts evaluation. this is done to support
  * streaming updates in the UI, which (IMO) is a better experience
- * 
+ *
  */
+
+// OpenAI's strict mode requires every property to be in `required`, so
+// `prepareForStrictMode` (tool-schema.ts) advertises optional fields as nullable.
+// Models then send `null` to mean "not provided", but Valibot's `v.optional`
+// rejects `null`. Strip nulls from object values so the wire format and the
+// runtime validator agree. Array elements are preserved (don't shift indices).
+function StripNullProperties(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) StripNullProperties(item);
+    return;
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    for (const key of Object.keys(obj)) {
+      if (obj[key] === null) delete obj[key];
+      else StripNullProperties(obj[key]);
+    }
+  }
+}
+
 export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI, content: ToolCallContent, partial = false): Promise<ToolResultContent> {
 
   // partial application is basically an entirely different path,
@@ -520,6 +540,8 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
       throw err;
     }
   }
+
+  StripNullProperties(content.input);
 
   const handler = handlers[content.name as ToolName];
   if (!handler) {
