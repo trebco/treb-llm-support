@@ -7,7 +7,7 @@ import { GoogleGenAI, GenerateContentResponse as GeminiChunk } from '@google/gen
 
 import type { Model } from './models';
 import { ToolDefinition } from './tool-schema';
-import { TypedChatMessages } from './stream2';
+import { TypedChatMessages } from './stream';
 
 const DEFAULT_MAX_TOKENS = 8192;
 

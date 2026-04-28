@@ -6,7 +6,7 @@ import * as v from 'valibot';
 import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType } from '@trebco/treb';
 import { ListAnnotations, SummarizeSpreadsheet } from './support-functions';
 import { parse as pj_parse } from 'partial-json';
-import { type ExternalUI, handlers } from './tool-handlers';
+import { type ExternalUI, handlers, ToolHandlerResponseType } from './tool-handlers';
 
 
 /**
@@ -44,13 +44,9 @@ export function StripNullProperties(value: unknown): void {
  * if this flag is set (1) we don't modify the message, and (2) we don't
  * validate. we just do a best-efforts evaluation. this is done to support
  * streaming updates in the UI, which (IMO) is a better experience
- *
- * TODO: we're not longer using our generic message structures so we 
- * can simplify the return types here -- we have to do separate translation
- * for each model type anyway
  * 
  */
-export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI, content: ToolCallContent, partial = false): Promise<ToolResultContent> {
+export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI, content: ToolCallContent, partial = false): Promise<ToolHandlerResponseType> {
 
   // partial application is basically an entirely different path,
   // we're keeping it in the same method for convenience
@@ -62,6 +58,10 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
     // ensure this tool supports partial application
 
     if (tool?.options?.supports_partial_application && content.input) {
+
+      // note that partial application doesn't need to return
+      // anything -- we just drop the result
+
       try {
         // console.info("PARTIAL", {input: content.input});
         const input = pj_parse(content.input);
@@ -78,15 +78,10 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
       }
     }
 
-    // we can use a dummy but keep the shape intact
+    // return dummy
+
     return {
-      name: content.name,
-      type: 'tool_result',
-      tool_use_id: content.id,
-      call_id: content.call_id,
-      content: {
-        type: 'object', content: '',
-      },
+      type: 'object', content: '',
     }
 
   }
@@ -111,7 +106,10 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
     }
   }
 
-  StripNullProperties(content.input);
+  // clone before scrubbing
+  
+  const content_input = JSON.parse(JSON.stringify(content.input));
+  StripNullProperties(content_input);
 
   const handler = handlers[content.name as ToolName];
   if (!handler) {
@@ -120,57 +118,30 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
 
   const schema = tool?.schema;
   if (schema) {
-    const validation = v.safeParse(schema, content.input);
+    const validation = v.safeParse(schema, content_input);
     if (!validation.success) {
       return {
-        type: 'tool_result',
-
-        // be sure to scrub name for claude
-        name: content.name,
-
-        // scrub id for gemini (unless it uses it? very unclear)
-        tool_use_id: content.id,
-
-        // special for OpenAI responses API
-        call_id: content.call_id,
-
-        content: {
           type: 'error',
           content: {
             message: 'invalid tool input',
             detail: validation.issues.map(i => i.message),
           },
-        }
-
       };
     }
   }
   else {
     return {
-      type: 'tool_result',
-      name: content.name,
-      tool_use_id: content.id,
-      call_id: content.call_id,
-      content: {
-        type: 'error',
-        content: 'Missing schema validator',
-      },
+      type: 'error',
+      content: 'Missing schema validator',
     };
   }
 
-  let result = handler(sheet, ui, content.input);
+  let result = handler(sheet, ui, content_input);
 
   if (result instanceof Promise) {
     result = await result;
   }
 
-  return {
-    type: 'tool_result',
-    name: content.name,
-    tool_use_id: content.id,
-    call_id: content.call_id,
-    // content: JSON.stringify(result),
-    content: result,
-  }
+  return result;
 
 } 
