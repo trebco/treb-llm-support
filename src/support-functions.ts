@@ -415,3 +415,16 @@ export function SummarizeSpreadsheet(sheet: EmbeddedSpreadsheet, sheets?: string
   return summary;
 
 }
+
+export function transpose<T>(matrix: T[][]) {
+  const rows = matrix.length;
+  const cols = matrix[0].length;
+  const result = [];
+  for (let j = 0; j < cols; j++) {
+    result[j] = Array(rows);
+    for (let i = 0; i < rows; i++) {
+      result[j][i] = matrix[i][j];
+    }
+  }
+  return result;
+}

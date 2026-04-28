@@ -161,7 +161,7 @@ export function GenerateImageBlockContent(result: ToolHandlerImageResponseType):
 
 }
 
-function FormatGeminiToolCalls(params: Parameters<GeminiChatMessages>, tool_call_results: ({
+function FormatGeminiToolResults(params: Parameters<GeminiChatMessages>, tool_call_results: ({
     index: number;
     content: ToolHandlerResponseType;
    }|undefined)[]) {
@@ -230,7 +230,7 @@ function FormatGeminiToolCalls(params: Parameters<GeminiChatMessages>, tool_call
 
 }
 
-function FormatOpenAIResponsesToolCalls(params: Parameters<GPTResponsesChatMessages>, tool_call_results: ({
+function FormatOpenAIResponsesToolResults(params: Parameters<GPTResponsesChatMessages>, tool_call_results: ({
     index: number;
     content: ToolHandlerResponseType;
    }|undefined)[]) {
@@ -285,7 +285,7 @@ function FormatOpenAIResponsesToolCalls(params: Parameters<GPTResponsesChatMessa
 }
 
 
-function FormatAnthropicToolCalls(params: Partial<Parameters<AnthropicChatMessages>>, tool_call_results: ({
+function FormatAnthropicToolResults(params: Partial<Parameters<AnthropicChatMessages>>, tool_call_results: ({
     index: number;
     content: ToolHandlerResponseType;
    }|undefined)[]) {
@@ -576,6 +576,8 @@ function ProcessAnthropicChunk(params: Partial<Parameters<AnthropicChatMessages>
 
   if (messages) {
 
+    // console.info({chunk});
+
     switch (chunk.type) {
       case 'message_start':
 
@@ -727,8 +729,7 @@ function ProcessAnthropicChunk(params: Partial<Parameters<AnthropicChatMessages>
       case 'message_stop':
 
         // {"type": "message_stop"}
-
-        console.info("RX message stop -- stop reason (from prior delta):", params.stop_reason);
+        // console.info("RX message stop -- stop reason (from prior delta):", params.stop_reason);
 
         params.message_complete = true;
         if (params.active_message) {
@@ -798,21 +799,21 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
         const content = await params.tool_call_fn(params.tool_calls, false);
         if (content?.length) {
           if (params.messages?.type === 'gemini') {
-            const next_message = FormatGeminiToolCalls(params as Parameters<GeminiChatMessages>, content);
+            const next_message = FormatGeminiToolResults(params as Parameters<GeminiChatMessages>, content);
             if (next_message) {
               params.messages.messages.push(next_message);
               continue;
             }
           }
           if (params.messages?.type === 'openai-responses') {
-            const responses = FormatOpenAIResponsesToolCalls(params as Parameters<GPTResponsesChatMessages>, content);
+            const responses = FormatOpenAIResponsesToolResults(params as Parameters<GPTResponsesChatMessages>, content);
             if (responses.length) {
               params.messages.messages.push(...responses);
               continue;
             }
           }
           else if (params.messages?.type === 'anthropic') {
-            const next_message = FormatAnthropicToolCalls(params as Parameters<AnthropicChatMessages>, content);
+            const next_message = FormatAnthropicToolResults(params as Parameters<AnthropicChatMessages>, content);
             if (next_message) {
               params.messages.messages.push(next_message);
               continue;
@@ -831,10 +832,10 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
       }
     }
     else {
-      console.info("returning on no pending tool calls");
+      // console.info("returning on no pending tool calls");
     }
 
-    console.info("reached end of loop");
+    // console.info("reached end of loop");
 
     return;
 
@@ -985,12 +986,22 @@ async function StreamInternal<T extends TypedChatMessages = TypedChatMessages>(
             type: 'client-side-error',
             message: message.text || 'unknown error',
           });
-          console.info("Calling resolve (1)");
+          // console.info("Calling resolve (1)");
           resolve();
           return;
         }
         else if (message.type === 'complete') {
-          console.info("Calling resolve on stream end");
+
+          // if there's something on the stack we need to 
+          // handle it first (this was causing dropped packets)
+
+          if (process_timeout) {
+            window.clearTimeout(process_timeout);
+            process_timeout = 0;
+            ProcessStack();
+          }
+
+          // console.info("Calling resolve on stream end");
           resolve();
           return;
         }

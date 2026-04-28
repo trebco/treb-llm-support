@@ -4,7 +4,7 @@ import type { ToolInputMap, ToolName } from './tool-schema';
 import { tools_map } from './tool-schema';
 import * as v from 'valibot';
 import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType } from '@trebco/treb';
-import { ListAnnotations, SummarizeSpreadsheet } from './support-functions';
+import { ListAnnotations, SummarizeSpreadsheet, transpose } from './support-functions';
 import { parse as pj_parse } from 'partial-json';
 
 /** placeholder */
@@ -332,7 +332,26 @@ export const handlers: ToolHandler = {
     return ToolResult(SummarizeSpreadsheet(sheet, input.sheets));
   },
   evaluate(sheet, _ui, input) {
-    return ToolResult(sheet.Evaluate(input.expression, { argument_separator: ',' }));
+    try {
+
+      // sheet.evaluate returns arrays in column-major order, matching the
+      // internal representation. I don't want to "fix" that because some
+      // code might be relying on it. For the time being we'll fix it here
+      // in the tool, and we can think about changing at the source down 
+      // the road.
+
+      let result = sheet.Evaluate(input.expression, { argument_separator: ',' });
+
+      if (Array.isArray(result)) {
+        result = transpose(result);
+      }
+
+      return ToolResult(result);
+
+    }
+    catch {
+      return ToolResult({ error: 'calculation error' });
+    }
   },
   select(sheet, _ui, input) {
     sheet.Select(input.reference);
