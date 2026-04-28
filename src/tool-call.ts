@@ -102,7 +102,18 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
     catch (err) {
       console.error('error parsing JSON in ExecuteToolCall');
       console.info({err, input: content.input});
-      throw err;
+
+      // throwing here is a problem
+      // throw err;
+
+      return {
+        type: 'error',
+        content: {
+          message: 'invalid JSON',
+          detail: (err as any)?.message || undefined,
+        },
+      };
+
     }
   }
 

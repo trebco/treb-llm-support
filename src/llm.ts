@@ -46,7 +46,6 @@ function GenerateImageBlockContent(result: ToolHandlerImageResponseType): Anthro
 export async function* StreamAnthropicResponse(
     instance: Anthropic, 
     model: string, 
-    // messages: ChatMessage[], 
     messages: AnthropicChatMessages,
     system: string, 
     temperature: number|undefined, 

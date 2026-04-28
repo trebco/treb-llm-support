@@ -79,7 +79,19 @@ export type Parameters<T extends TypedChatMessages = TypedChatMessages> =
 
   tools?: ToolDefinition[];
   timeout?: number;
+
+  /**
+   * triggered by various conditions for different APIs. the deepseek 
+   * anthropic interface sends this early, apparently incorrectly.
+   */
   message_complete?: boolean;
+
+  /** 
+   * capture stop reason. this could indicate an error or refusal, or in
+   * absence, could indicate a stream error. TODO: sort out the different 
+   * provider API values
+   */
+  stop_reason?: string;
 
   /** insert index, so we can tell svelte to update */
   current_message_index?: number;
@@ -100,6 +112,24 @@ export type Parameters<T extends TypedChatMessages = TypedChatMessages> =
    }|undefined)[]|undefined>;
 
 };
+
+/**
+ * clear accumulated state. we have to do this between stream calls
+ * if we're looping with tool calls/tool results.
+ * 
+ * @param params 
+ */
+function ClearState<T extends TypedChatMessages = TypedChatMessages>(params: Partial<Parameters<T>>) {
+
+  // clear any state
+  params.active_message = undefined;
+  params.active_messages = undefined;
+  params.tool_calls = undefined;
+  params.current_message_index = undefined;
+  params.message_complete = false;
+  params.stop_reason = undefined;
+
+}
 
 export function GenerateImageBlockContent(result: ToolHandlerImageResponseType): Anthropic.ToolResultBlockParam['content'] {
   const content: Anthropic.ToolResultBlockParam['content'] = [];
@@ -688,11 +718,17 @@ function ProcessAnthropicChunk(params: Partial<Parameters<AnthropicChatMessages>
         //  "delta": {"stop_reason": "end_turn", "stop_sequence":null}, 
         //    "usage": {"output_tokens": 15}}
 
+        if (chunk.delta.stop_reason) {
+          params.stop_reason = chunk.delta.stop_reason;
+        }
+
         break;
 
       case 'message_stop':
 
         // {"type": "message_stop"}
+
+        console.info("RX message stop -- stop reason (from prior delta):", params.stop_reason);
 
         params.message_complete = true;
         if (params.active_message) {
@@ -747,16 +783,13 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
   }
 
   for (;;) {
-  
-    // clear any state
-    params.active_message = undefined;
-    params.active_messages = undefined;
-    params.tool_calls = undefined;
-    params.current_message_index = undefined;
+
+    ClearState(params);
 
     await StreamInternal(params as Parameters<T>);
 
     if (interrupted) {
+      console.info("interrupted, returning");
       return;
     }
 
@@ -786,6 +819,9 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
             }
           }
         }
+        else {
+          console.info("content length is 0?");
+        }
       }
       catch (err) {
         params.messages?.messages.push({
@@ -794,6 +830,11 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
         })
       }
     }
+    else {
+      console.info("returning on no pending tool calls");
+    }
+
+    console.info("reached end of loop");
 
     return;
 
@@ -944,11 +985,16 @@ async function StreamInternal<T extends TypedChatMessages = TypedChatMessages>(
             type: 'client-side-error',
             message: message.text || 'unknown error',
           });
-          // console.info("Calling resolve (1)");
+          console.info("Calling resolve (1)");
           resolve();
           return;
         }
-        
+        else if (message.type === 'complete') {
+          console.info("Calling resolve on stream end");
+          resolve();
+          return;
+        }
+
         message_stack.push(message);
         // current_chunks.push(JSON.parse(JSON.stringify(message)));
 
@@ -956,10 +1002,12 @@ async function StreamInternal<T extends TypedChatMessages = TypedChatMessages>(
           process_timeout = window.setTimeout(() => {
             process_timeout = 0;
             ProcessStack();
+            /*
             if (params.message_complete) {
-              // console.info("Calling resolve (2)");
+              console.info("Calling resolve (2)");
               resolve();
             }
+            */
           }, 100);
         }
     
