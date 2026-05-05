@@ -51,6 +51,8 @@ export function IsNotItemReference<T>(candidate: T|OpenAI.Responses.ResponseInpu
   return !(candidate && typeof candidate === 'object' && (candidate as OpenAI.Responses.ResponseInputItem.ItemReference).type === 'item_reference');
 }
 
+export type IndexedToolResult = ToolHandlerResponseType & { index: number };
+
 export type TypedChatMessages
   = AnthropicChatMessages
   | GeminiChatMessages
@@ -106,10 +108,7 @@ export type Parameters<T extends TypedChatMessages = TypedChatMessages> =
   tool_calls?: GenericToolCall[];
 
   /** callback tool handler */
-  tool_call_fn?: (args: GenericToolCall[], partial?: boolean) => Promise<({
-    index: number;
-    content: ToolHandlerResponseType;
-   }|undefined)[]|undefined>;
+  tool_call_fn?: (args: GenericToolCall[], partial?: boolean) => Promise<IndexedToolResult[]>;
 
 };
 
@@ -161,10 +160,7 @@ export function GenerateImageBlockContent(result: ToolHandlerImageResponseType):
 
 }
 
-function FormatGeminiToolResults(params: Parameters<GeminiChatMessages>, tool_call_results: ({
-    index: number;
-    content: ToolHandlerResponseType;
-   }|undefined)[]) {
+function FormatGeminiToolResults(params: Parameters<GeminiChatMessages>, tool_call_results: IndexedToolResult[]) {
 
   const gemini_message: GeminiContent = {
     role: 'user',
@@ -177,23 +173,23 @@ function FormatGeminiToolResults(params: Parameters<GeminiChatMessages>, tool_ca
       // find the source
       const source = params.active_message?.parts?.[result.index];
       if (source) {
-        if (result.content.type === 'error') {
+        if (result.type === 'error') {
           gemini_message.parts?.push({
             functionResponse: {
               name: source.functionCall?.name || '',
-              response: { error: result.content.content || 'unknown error' },
+              response: { error: result.content || 'unknown error' },
               id: source.functionCall?.id,
             }
           });
         }
-        else if (result.content.type === 'image') {
-          const [header, data] = result.content.image_uri.split(",");
+        else if (result.type === 'image') {
+          const [header, data] = result.image_uri.split(",");
           const mimeType = header.match(/:(.*?);/)?.[1];
 
           gemini_message.parts?.push({
             functionResponse: {
               name: source.functionCall?.name || '',
-              response: { content: result.content.content || {}},
+              response: { content: result.content || {}},
               id: source.functionCall?.id,
               parts: [
                 {
@@ -211,7 +207,7 @@ function FormatGeminiToolResults(params: Parameters<GeminiChatMessages>, tool_ca
           gemini_message.parts?.push({
             functionResponse: {
               name: source.functionCall?.name || '',
-              response: { content: result.content.content },
+              response: { content: result.content },
               id: source.functionCall?.id,
             },
           });
@@ -230,10 +226,7 @@ function FormatGeminiToolResults(params: Parameters<GeminiChatMessages>, tool_ca
 
 }
 
-function FormatOpenAIResponsesToolResults(params: Parameters<GPTResponsesChatMessages>, tool_call_results: ({
-    index: number;
-    content: ToolHandlerResponseType;
-   }|undefined)[]) {
+function FormatOpenAIResponsesToolResults(params: Parameters<GPTResponsesChatMessages>, tool_call_results: IndexedToolResult[]) {
 
   type M = Exclude<GPTResponsesChatMessages['messages'][number], ClientSideErrorMessage>;
   const messages: M[] = [];
@@ -246,24 +239,24 @@ function FormatOpenAIResponsesToolResults(params: Parameters<GPTResponsesChatMes
       if (source?.type === 'function_call') {
 
         let output: string | OpenAI.Responses.ResponseFunctionCallOutputItemList = '';
-        switch (result.content.type) {
+        switch (result.type) {
           case 'object':
-            output = JSON.stringify(result.content.content);
+            output = JSON.stringify(result.content);
             break;
           
           case 'error':
-            output = JSON.stringify(result.content);
+            output = JSON.stringify(result);
             break;
           
           case 'image':
             output = [{
               type: 'input_image',
-              image_url: result.content.image_uri,
+              image_url: result.image_uri,
             }];
-            if (result.content.content) {
+            if (result.content) {
               output.push({
               type: 'input_text',
-              text: JSON.stringify(result.content.content),
+              text: JSON.stringify(result.content),
             });
           }
           break;
@@ -285,10 +278,7 @@ function FormatOpenAIResponsesToolResults(params: Parameters<GPTResponsesChatMes
 }
 
 
-function FormatAnthropicToolResults(params: Partial<Parameters<AnthropicChatMessages>>, tool_call_results: ({
-    index: number;
-    content: ToolHandlerResponseType;
-   }|undefined)[]) {
+function FormatAnthropicToolResults(params: Partial<Parameters<AnthropicChatMessages>>, tool_call_results: IndexedToolResult[]) {
 
   type M = Exclude<AnthropicChatMessages['messages'][number], ClientSideErrorMessage>;
 
@@ -303,14 +293,14 @@ function FormatAnthropicToolResults(params: Partial<Parameters<AnthropicChatMess
         const source = params.active_message.content[result.index];
         if (source.type === 'tool_use') {
 
-          if (result.content.type === 'object') {
+          if (result.type === 'object') {
             response_content.push({
               type: 'tool_result',
               tool_use_id: source.id,
-              content: JSON.stringify(result.content.content),
+              content: JSON.stringify(result.content),
             });
           }
-          else if (result.content.type === 'error') {
+          else if (result.type === 'error') {
             response_content.push({
               type: 'tool_result',
               tool_use_id: source.id,
@@ -321,7 +311,7 @@ function FormatAnthropicToolResults(params: Partial<Parameters<AnthropicChatMess
             response_content.push({
               type: 'tool_result',
               tool_use_id: source.id,
-              content: GenerateImageBlockContent(result.content),
+              content: GenerateImageBlockContent(result),
             });
           }
 
