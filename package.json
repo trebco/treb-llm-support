@@ -7,9 +7,9 @@
     "typecheck": "bun x tsc --noEmit"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.87.0",
+    "@anthropic-ai/sdk": "^0.95.1",
     "@google/genai": "^1.49.0",
-    "@trebco/treb": "^37.5.2",
+    "@trebco/treb": "^38.1.2",
     "@types/markdown-it": "^14.1.2",
     "@types/markdown-it-link-attributes": "^3.0.5",
     "@vscode/markdown-it-katex": "^1.1.2",

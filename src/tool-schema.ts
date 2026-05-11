@@ -253,6 +253,10 @@ const SelectSchema = v.object({
     v.string(),
     v.description('Sheet-qualified cell or range reference to select (e.g. "Sheet1!A1", "Sheet1!B2:D5"). Always include the sheet name to ensure the correct sheet is selected, as the user may change the active sheet at any time.'),
   ),
+  scroll_into_view: v.pipe(
+    v.boolean(),
+    v.description('Scroll the spreadsheet view so the selection is visible'),
+  )
 });
 
 const GetSelectionSchema = v.object({});
