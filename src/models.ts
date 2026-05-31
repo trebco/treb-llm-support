@@ -196,8 +196,8 @@ const list = [
     },
   },
   {
-    label: 'Claude Opus 4.7',
-    name: 'claude-opus-4-7',
+    label: 'Claude Opus 4.8',
+    name: 'claude-opus-4-8',
     provider: anthropic_provider,
     cost: {
       input: 5.00,
