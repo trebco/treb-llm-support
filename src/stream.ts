@@ -15,7 +15,7 @@ import OpenAI from 'openai';
 import type { InitMessage, MessageType } from './llm-worker';
 import type { Model } from './models';
 import { ToolDefinition } from './tool-schema';
-import { TextBlockParam, ThinkingBlockParam, ToolUseBlockParam } from '@anthropic-ai/sdk/resources';
+import { MessageParam, TextBlockParam, ThinkingBlockParam, ToolUseBlockParam } from '@anthropic-ai/sdk/resources';
 import { ToolHandlerImageResponseType, ToolHandlerResponseType } from './tool-handlers';
 
 import type { Content as GeminiContent, GenerateContentResponse as GeminiResponseChunk } from '@google/genai';
@@ -341,16 +341,21 @@ function ProcessGeminiChunk(params: Partial<Parameters<GeminiChatMessages>>, chu
     // gemini has a "message" concept so use the active message
 
     if (!params.active_message) {
-      params.active_message = {
+
+      // reverse order for proxy/solidjs
+
+      params.current_message_index = messages.messages.length;
+      params.message_complete = false;
+      messages.messages[params.current_message_index] = {
         role: 'model',
         parts: [],
 
         // do we need an ID here? not sure
 
       };
-      params.current_message_index = messages.messages.length;
-      params.message_complete = false;
-      messages.messages[params.current_message_index] = params.active_message;
+      
+      params.active_message = messages.messages[params.current_message_index] as GeminiContent;
+      
     }
 
     const message = params.active_message;
@@ -577,10 +582,13 @@ function ProcessAnthropicChunk(params: Partial<Parameters<AnthropicChatMessages>
         //    "model": "claude-opus-4-7", "stop_reason": null, "stop_sequence": null, 
         //    "usage": {"input_tokens": 25, "output_tokens": 1}}}
 
+        // fix for proxy: make sure to set the array element first, then we'll
+        // set _that_ as active message so it if is a proxy, that will survive
+
         params.message_complete = false;
-        params.active_message = chunk.message;
         params.current_message_index = messages.messages.length;
-        messages.messages[params.current_message_index] = params.active_message;
+        messages.messages[params.current_message_index] = chunk.message;
+        params.active_message = messages.messages[params.current_message_index] as MessageParam;
 
         break;
 
