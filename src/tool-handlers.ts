@@ -354,7 +354,7 @@ export const handlers: ToolHandler = {
     }
   },
   select(sheet, _ui, input) {
-    sheet.Select(input.reference, input.scroll_into_view);
+    sheet.Select(input.reference, input.scroll_into_view ? 'smooth' : undefined);
     return ToolResult({});
   },
   get_selection(sheet, _ui, _input) {

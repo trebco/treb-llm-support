@@ -151,8 +151,8 @@ const list = [
   },
 
   {
-    label: 'Gemini 3.1 Flash Lite (preview)',
-    name: 'gemini-3.1-flash-lite-preview',
+    label: 'Gemini 3.1 Flash Lite',
+    name: 'gemini-3.1-flash-lite',
     provider: gemini_provider,
     cost: {
       input: 0.25,
@@ -160,12 +160,12 @@ const list = [
     },
   },  
   {
-    label: 'Gemini 3 Flash (preview)',
-    name: 'gemini-3-flash-preview',
+    label: 'Gemini 3.5 Flash',
+    name: 'gemini-3.5-flash',
     provider: gemini_provider,
     cost: {
-      input: 0.50,
-      output: 3.00,
+      input: 1.50,
+      output: 9.00,
     }
   },  
   {
