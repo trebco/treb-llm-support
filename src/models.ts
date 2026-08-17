@@ -7,6 +7,7 @@ export interface ModelFeatures {
 export interface Provider {
   name: string;
   website: string;
+  models?: string;
   default_features: Partial<ModelFeatures>;
   api: 'anthropic'|'gemini'|'openai-responses'|'openai-chat-completion';
 }
@@ -14,7 +15,10 @@ export interface Provider {
 export const deepseek_provider: Provider = {
   name: 'Deepseek',
   website: 'https://platform.deepseek.com',
-  default_features: {},
+  models: 'https://api-docs.deepseek.com/quick_start/pricing',
+  default_features: {
+
+  },
   api: 'anthropic',
 };
 
@@ -28,6 +32,7 @@ export const togheterai_provider: Provider = {
 export const openai_provider: Provider = {
   name: 'OpenAI',
   website: 'https://openai.com/api',
+  models: 'https://developers.openai.com/api/docs/models',
   default_features: {
     image_support_in_tools: true,
     tool_search: true,
@@ -150,6 +155,8 @@ const list = [
     },
   },
 
+  // ----
+
   {
     label: 'Gemini 3.1 Flash Lite',
     name: 'gemini-3.1-flash-lite',
@@ -177,24 +184,29 @@ const list = [
       output: 12.00,
     }
   },
+
+  // ---
+
   {
-    label: 'Claude Sonnet 4.6',
-    name: 'claude-sonnet-4-6',
+    label: 'Claude Sonnet 5',
+    name: 'claude-sonnet-5',
     provider: anthropic_provider,
     cost: {
-      input: 3.00,
-      output: 15.00,
+      input: 2.00,
+      output: 10.00,
     },
   },
   {
-    label: 'Claude Opus 4.6',
-    name: 'claude-opus-4-6',
+    label: 'Claude Opus 5',
+    name: 'claude-opus-5',
     provider: anthropic_provider,
     cost: {
       input: 5.00,
       output: 25.00,
     },
   },
+
+  /*
   {
     label: 'Claude Opus 4.8',
     name: 'claude-opus-4-8',
@@ -204,6 +216,29 @@ const list = [
       output: 25.00,
     },
   },
+  */
+
+  {
+    name: 'gpt-5.6-terra',
+    label: 'GPT 5.6 Terra',
+    provider: openai_provider,
+    cost: {
+      input: 2,
+      output: 12,
+    },
+  },
+
+  {
+    name: 'gpt-5.6-luna',
+    label: 'GPT 5.6 Luna',
+    provider: openai_provider,
+    cost: {
+      input: 0.20,
+      output: 1.20,
+    },
+  },
+
+  /*
   {
     label: 'GPT-5.5',
     name: 'gpt-5.5',
@@ -231,6 +266,7 @@ const list = [
       output: 4.50,
     },
   },
+  */
 
 ] as const satisfies Model[];
 
