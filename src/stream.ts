@@ -496,11 +496,18 @@ function ProcessGPTResponsesChunk(params: Partial<Parameters<GPTResponsesChatMes
               // fall through
 
             default:
+              /*
               params.active_messages[chunk.output_index] = 
                 messages.messages[(params.current_message_index||0) + chunk.output_index] = 
                 {
                   ...chunk.item
                 };
+              */
+              {
+                const idx = (params.current_message_index || 0) + chunk.output_index;
+                messages.messages[idx] = { ...chunk.item };
+                params.active_messages[chunk.output_index] = messages.messages[idx];   // read back the proxy
+              }
               break;
           }
         }
