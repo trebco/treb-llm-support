@@ -650,13 +650,21 @@ function ProcessAnthropicChunk(params: Partial<Parameters<AnthropicChatMessages>
           if (target && typeof target !== 'string') {
             switch (chunk.delta.type) {
 
-              // ATM skipping citations_delta and signature_delta
+              // ATM skipping citations_delta
 
               // instead of switching the two types, we could just
               // trust the delta type
 
               case 'thinking_delta':
                 (target as ThinkingBlockParam).thinking += chunk.delta.thinking;
+                break;
+
+              // capture the thinking block signature so we can echo the block
+              // back unchanged. without this, newer models (which stream a
+              // signed thinking block) get rejected on replay with
+              // "each thinking block must contain thinking".
+              case 'signature_delta':
+                (target as ThinkingBlockParam).signature += chunk.delta.signature;
                 break;
 
               case 'input_json_delta':
