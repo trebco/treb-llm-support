@@ -123,6 +123,13 @@ export interface Model<T = unknown> {
 
 }
 
+// 
+// we originally built in pricing to this structure but it's
+// become impossible, now there are cache hit/cache miss prices
+// and peak/off-peak prices, we'll just let someone else worry 
+// about it
+//
+
 const list = [
 
   /*
@@ -137,12 +144,12 @@ const list = [
   },
   */
   {
-    label: 'DeepSeek V4 Flash',
-    name: 'deepseek-v4-flash',
+    label: 'DeepSeek-V4.1-Flash',
+    name: 'deepseek-flash',
     provider: deepseek_provider,
     cost: {
-      input: 0.14,
-      output: 0.28,
+      input: 0.30,
+      output: 1.20,
     },
   },
   {
