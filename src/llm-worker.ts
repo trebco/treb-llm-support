@@ -17,6 +17,7 @@ let deepseek: Anthropic|undefined;
 let openai: OpenAI|undefined;
 let anthropic: Anthropic|undefined;
 let together: OpenAI|undefined;
+let localhost: Anthropic|undefined;
 let openrouter: OpenAI|undefined;
 let gemini: GoogleGenAI|undefined;
 
@@ -80,6 +81,18 @@ const Init = async (message: InitMessage) => {
   let openai_legacy_api = true;
 
   switch (message.model.provider.name) {
+    case 'Localhost':
+
+      if (!localhost || localhost.apiKey !== message.key) {
+        localhost = new Anthropic({
+          apiKey: message.key,
+          baseURL: "http://localhost:8080/",
+          dangerouslyAllowBrowser: true,
+        });
+      }
+      instance = localhost;
+      break;
+
     case 'Anthropic':
       if (!anthropic || anthropic.apiKey !== message.key) {
         anthropic = new Anthropic({

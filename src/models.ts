@@ -22,6 +22,13 @@ export const deepseek_provider: Provider = {
   api: 'anthropic',
 };
 
+export const localhost_provider: Provider = {
+  name: 'Localhost',
+  website: 'https://localhost',
+  default_features: {},
+  api: 'anthropic',
+};
+
 export const togheterai_provider: Provider = {
   name: 'TogetherAI',
   website: 'https://api.together.ai',
@@ -131,6 +138,16 @@ export interface Model<T = unknown> {
 //
 
 const list = [
+
+  {
+    label: 'Localhost',
+    name: 'localhost',
+    provider: localhost_provider,
+    cost: {
+      input: 0,
+      output: 0,
+    }
+  },
 
   /*
   {
