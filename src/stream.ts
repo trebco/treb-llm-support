@@ -301,10 +301,16 @@ function FormatAnthropicToolResults(params: Partial<Parameters<AnthropicChatMess
             });
           }
           else if (result.type === 'error') {
+
+            // flag it. without is_error the model just sees a tool_result
+            // whose body happens to read like an error, which it's free to
+            // treat as success -- and the UI has nothing to key off either.
+
             response_content.push({
               type: 'tool_result',
               tool_use_id: source.id,
               content: JSON.stringify(result.content),
+              is_error: true,
             });
           }
           else {
@@ -771,6 +777,33 @@ function ProcessAnthropicChunk(params: Partial<Parameters<AnthropicChatMessages>
  */
 let interrupted = false;
 
+/**
+ * hard cap on tool-call rounds. the loop in Stream() is otherwise unbounded:
+ * a model that keeps calling a tool that keeps failing spins forever, and
+ * that looks exactly like a hang from the UI -- a turn that is only a tool
+ * call renders nothing, so the transcript sits empty behind the spinner.
+ *
+ * note a round is one request/response, not one tool call -- a turn that
+ * calls four tools is still one round. this is a runaway guard, set well
+ * above what real work needs, not a budget.
+ */
+const MAX_TOOL_CALL_ROUNDS = 40;
+
+/**
+ * how long we'll wait for *any* message from the worker before giving up.
+ * this is an idle timer, reset on every message, so it never truncates a
+ * stream that's still producing -- it only catches a worker that has stopped
+ * talking to us without posting `complete` or `error`.
+ */
+const WATCHDOG_IDLE_MS = 120 * 1000;
+
+/** readable text for a caught value of unknown type */
+function ErrorMessageText(err: unknown): string {
+  if (err instanceof Error) { return err.message; }
+  if (typeof err === 'string') { return err; }
+  return String(err ?? 'unknown error');
+}
+
 export function AbortStream() {
   interrupted = true;
 }
@@ -796,7 +829,15 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
     throw new Error('no messages');
   }
 
-  for (;;) {
+  for (let round = 0; ; round++) {
+
+    if (round >= MAX_TOOL_CALL_ROUNDS) {
+      params.messages?.messages.push({
+        type: 'client-side-error',
+        message: `stopped after ${MAX_TOOL_CALL_ROUNDS} tool-call rounds without a final response`,
+      });
+      return;
+    }
 
     ClearState(params);
 
@@ -946,101 +987,160 @@ async function StreamInternal<T extends TypedChatMessages = TypedChatMessages>(
 
     const worker = params.worker;
 
+    //
+    // this promise is the whole stream: the caller awaits it, and in the app
+    // the modal spinner lives exactly as long as that await. everything that
+    // settles it runs in a callback, and a throw in a callback does *not*
+    // reject the enclosing promise -- it escapes into the event loop and
+    // leaves the promise pending forever. so every path here settles first
+    // and does anything that might throw afterwards, and the whole message
+    // handler is wrapped. there is no way out of this block except Settle().
+    //
+
+    let settled = false;
+    let reported = false;
     let interval_id = 0;
+    let watchdog_id = 0;
+
     await new Promise<void>(resolve => {
+
+      /** settle the stream promise. idempotent. */
+      const Settle = () => {
+        if (settled) { return; }
+        settled = true;
+        resolve();
+      };
+
+      /**
+       * report a client-side failure in the transcript, at most once per
+       * stream. guarded, because this is a store write in the consuming app
+       * and can run reactive effects that throw -- and it's called from the
+       * paths that exist precisely because something already threw.
+       */
+      const Report = (message: string) => {
+        if (reported) { return; }
+        reported = true;
+
+        // we didn't reach a clean end of stream, so anything we accumulated
+        // may be half-built -- don't hand it to the tool-call loop.
+
+        params.tool_calls = undefined;
+
+        try {
+          messages.messages.push({
+            type: 'client-side-error',
+            message,
+          });
+        }
+        catch (err) {
+          console.error(err);
+        }
+      };
+
+      /** (re)arm the idle watchdog -- see WATCHDOG_IDLE_MS */
+      const ResetWatchdog = () => {
+        window.clearTimeout(watchdog_id);
+        watchdog_id = window.setTimeout(() => {
+          Settle();
+          Report('the model stopped responding');
+        }, WATCHDOG_IDLE_MS);
+      };
 
       interval_id = window.setInterval(() => {
         if (interrupted) {
-          messages.messages.push({
-            type: 'client-side-error',
-            message: 'interrupted',
-          });
-          resolve();
+          Settle();
+          Report('interrupted');
         }
       }, 250);
 
       worker.onmessageerror = (event: MessageEvent) => {
-        messages.messages.push({
-          type: 'client-side-error',
-          message: event.data || 'worker error',
-        });
-        resolve();
+        Settle();
+        Report(ErrorMessageText(event.data ?? 'worker error'));
       };
 
       worker.onerror = (event: ErrorEvent) => {
-        messages.messages.push({
-          type: 'client-side-error',
-          message: event.error || 'worker error',
-        });
-        resolve();
+        Settle();
+        Report(ErrorMessageText(event.error ?? (event.message || 'worker error')));
       };
 
       worker.onmessage = (event: MessageEvent) => {
-    
-        /*
-        // console.info(event);
-  
-        if (timeout) {
 
-          // we're clearing the timeout when it starts to respond,
-          // but is it guaranteed to finish? not sure. at least the 
-          // problem we were trying to solve at the time was the service
-          // never responding (was deepseek)
+        ResetWatchdog();
 
-          console.info("clearing timeout on first rx");
-          window.clearTimeout(timeout);
-          timeout = 0;
-        }
-        */
+        try {
 
-        const message = event.data as MessageType;
-        if (message.type === 'error') {
-          messages.messages.push({
-            type: 'client-side-error',
-            message: message.text || 'unknown error',
-          });
-          // console.info("Calling resolve (1)");
-          resolve();
-          return;
-        }
-        else if (message.type === 'complete') {
+          const message = event.data as MessageType;
+          if (message.type === 'error') {
+            Settle();
+            Report(message.text || 'unknown error');
+            return;
+          }
+          else if (message.type === 'complete') {
 
-          // if there's something on the stack we need to 
-          // handle it first (this was causing dropped packets)
+            // settle *before* draining the stack. ProcessStack() runs
+            // consumer code -- reactive renders, and partial tool
+            // application, which calls into the spreadsheet synchronously --
+            // so it can throw, and a throw used to mean we never reached
+            // resolve(). resolve() only queues the awaiting continuation,
+            // so the drain below still runs to completion first; we just
+            // can't be stranded by it any more.
 
-          if (process_timeout) {
-            window.clearTimeout(process_timeout);
-            process_timeout = 0;
-            ProcessStack();
+            Settle();
+
+            // if there's something on the stack we need to 
+            // handle it first (this was causing dropped packets)
+
+            if (process_timeout) {
+              window.clearTimeout(process_timeout);
+              process_timeout = 0;
+              ProcessStack();
+            }
+
+            return;
           }
 
-          // console.info("Calling resolve on stream end");
-          resolve();
-          return;
+          message_stack.push(message);
+          // current_chunks.push(JSON.parse(JSON.stringify(message)));
+
+          if (!process_timeout) {
+            process_timeout = window.setTimeout(() => {
+              process_timeout = 0;
+              try {
+                ProcessStack();
+              }
+              catch (err) {
+                // same reasoning: uncaught, this would silently drop the
+                // rest of the stream and leave the transcript half-built.
+                console.error(err);
+                Settle();
+                Report(ErrorMessageText(err));
+              }
+            }, 100);
+          }
+
+        }
+        catch (err) {
+          console.error(err);
+          Settle();
+          Report(ErrorMessageText(err));
         }
 
-        message_stack.push(message);
-        // current_chunks.push(JSON.parse(JSON.stringify(message)));
-
-        if (!process_timeout) {
-          process_timeout = window.setTimeout(() => {
-            process_timeout = 0;
-            ProcessStack();
-            /*
-            if (params.message_complete) {
-              console.info("Calling resolve (2)");
-              resolve();
-            }
-            */
-          }, 100);
-        }
-    
       };
 
-      worker.postMessage(JSON.parse(JSON.stringify(init_message))); // remove any svelte wrappers
+      ResetWatchdog();
+
+      try {
+        worker.postMessage(JSON.parse(JSON.stringify(init_message))); // remove any svelte wrappers
+      }
+      catch (err) {
+        console.error(err);
+        Settle();
+        Report(ErrorMessageText(err));
+      }
 
     });
 
+    window.clearTimeout(watchdog_id);
     if (interval_id) {
       window.clearInterval(interval_id);
     }

@@ -74,7 +74,13 @@ export async function ExecuteToolCall(sheet: EmbeddedSpreadsheet, ui: ExternalUI
         }
       }
       catch (err) {
-        console.info("partial error", {err});
+        // expected, and not necessarily a real problem: partial input is
+        // parsed from incomplete JSON, so handlers routinely see truncated
+        // values mid-stream. the result is discarded either way. converters
+        // that can be handed a truncated value should skip it rather than
+        // throw (see parseFontSize) -- this stays as a backstop, and
+        // deliberately does not rethrow: we're on the stream's call stack.
+        console.info("partial application error (may be a truncated value)", {err});
       }
     }
 

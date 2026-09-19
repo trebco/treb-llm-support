@@ -61,12 +61,20 @@ function serializeColor(color: Color | undefined): string | undefined {
 
 // --- FontSize conversion ---
 
-function parseFontSize(value: string): FontSize {
+/**
+ * parse a relative font size ("1.2em", "120%"). returns undefined rather than
+ * throwing: these converters run inside partial application while the tool
+ * call is still streaming, where *valid* input arrives truncated -- mid-stream
+ * "1.2em" is literally "1.2" for a tick, and throwing on that aborted the
+ * whole partial pass. callers skip the property when this returns undefined,
+ * and collect an issue (see inputToCellStyle) when they have somewhere to
+ * report it, which turns a genuinely bad value into a tool error the model
+ * can act on instead of an exception on the stream's call stack.
+ */
+function parseFontSize(value: string): FontSize|undefined {
   const match = value.match(/^([0-9]*\.?[0-9]+)(em|%)$/);
   if (!match) {
-    throw new Error(
-      `Invalid font size "${value}". Use relative units only: e.g. "1.2em", "120%".`,
-    );
+    return undefined;
   }
   return { value: parseFloat(match[1]), unit: match[2] as 'em' | '%' };
 }
@@ -97,13 +105,27 @@ function serializeStyle(style: CellStyle): Record<string, unknown> {
   return result;
 }
 
-function inputToCellStyle(input: NonNullable<ToolInputMap['set_cells']['styles']>[string]): CellStyle {
+/**
+ * @param issues - optional sink for values we couldn't convert. pass it on a
+ * real tool call, so the caller can fail the call with a message the model
+ * can fix; omit it for partial (streaming) application, where an unconvertible
+ * value usually just means the JSON hasn't finished arriving yet.
+ */
+function inputToCellStyle(input: NonNullable<ToolInputMap['set_cells']['styles']>[string], issues?: string[]): CellStyle {
   const style: CellStyle = {};
   if (input.bold !== undefined) style.bold = input.bold;
   if (input.italic !== undefined) style.italic = input.italic;
   if (input.underline !== undefined) style.underline = input.underline;
   if (input.strike !== undefined) style.strike = input.strike;
-  if (input.font_size !== undefined) style.font_size = parseFontSize(input.font_size);
+  if (input.font_size !== undefined) {
+    const font_size = parseFontSize(input.font_size);
+    if (font_size) {
+      style.font_size = font_size;
+    }
+    else {
+      issues?.push(`Invalid font size "${input.font_size}". Use relative units only: e.g. "1.2em", "120%".`);
+    }
+  }
   if (input.text_color !== undefined) style.text = parseColor(input.text_color);
   if (input.fill_color !== undefined) style.fill = parseColor(input.fill_color);
   if (input.horizontal_align !== undefined) style.horizontal_align = input.horizontal_align;
@@ -218,6 +240,12 @@ const ToolResult = (content: unknown): ToolHandlerGenericResposneType => ({
   content,
 });
 
+/** a tool call we refused: the model gets the message and can retry */
+const ToolError = (message: string, detail?: unknown): ToolHandlerErrorType => ({
+  type: 'error',
+  content: detail === undefined ? { message } : { message, detail },
+});
+
 /** support function for charts */
 function ComposeSeries(series: { values: string, labels?: string, title?: string}) {
 
@@ -298,16 +326,30 @@ export const handlers: ToolHandler = {
     return ToolResult({});
   },
   set_cells(sheet, ui, input) {
+
+    // convert (and so validate) styles before touching the sheet: a bad
+    // style value should fail the call cleanly, not leave the values block
+    // applied and the styles block half-applied behind an exception.
+
+    const issues: string[] = [];
+    const styles: [string, CellStyle][] = [];
+
+    if (input.styles) {
+      for (const [reference, styleInput] of Object.entries(input.styles)) {
+        styles.push([reference, inputToCellStyle(styleInput, issues)]);
+      }
+    }
+    if (issues.length) {
+      return ToolError('invalid style', issues);
+    }
+
     if (input.values) {
       for (const [reference, value] of Object.entries(input.values)) {
         sheet.SetRange(reference, value, { argument_separator: ',' });
       }
     }
-    if (input.styles) {
-      for (const [reference, styleInput] of Object.entries(input.styles)) {
-        const style = inputToCellStyle(styleInput);
-        sheet.ApplyStyle(reference, style, true);
-      }
+    for (const [reference, style] of styles) {
+      sheet.ApplyStyle(reference, style, true);
     }
     if (input.borders) {
       for (const [reference, opts] of Object.entries(input.borders)) {
@@ -415,6 +457,19 @@ export const handlers: ToolHandler = {
       fill: parseColor('#FFC7CE'),
       text: parseColor('#9C0006'),
     };
+
+    // as in set_cells: convert up front so an unusable style value is a
+    // tool error rather than an exception part-way through applying. only
+    // the two matching types read a style -- don't start failing calls that
+    // used to ignore it.
+
+    const uses_style = input.type === 'highlight_cells' || input.type === 'duplicate_values';
+    const issues: string[] = [];
+    const style = (uses_style && input.style) ? inputToCellStyle(input.style, issues) : defaultStyle;
+    if (issues.length) {
+      return ToolError('invalid style', issues);
+    }
+
     switch (input.type) {
       case 'color_scale':
         sheet.ConditionalFormatGradient(input.reference, input.preset ?? 'green-red');
@@ -423,7 +478,6 @@ export const handlers: ToolHandler = {
         sheet.ConditionalFormatDataBars(input.reference, { fill: parseColor(input.color ?? '#4472C4'), hide_values: input.hide_values });
         break;
       case 'highlight_cells': {
-        const style = input.style ? inputToCellStyle(input.style) : defaultStyle;
         sheet.ConditionalFormatCellMatch(input.reference, {
           style,
           expression: input.expression ?? '',
@@ -432,7 +486,6 @@ export const handlers: ToolHandler = {
         break;
       }
       case 'duplicate_values': {
-        const style = input.style ? inputToCellStyle(input.style) : defaultStyle;
         sheet.ConditionalFormatDuplicateValues(input.reference, { style, unique: input.unique });
         break;
       }
