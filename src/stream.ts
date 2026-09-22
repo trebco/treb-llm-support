@@ -809,6 +809,92 @@ export function AbortStream() {
 }
 
 /**
+ * remove any assistant/model turn that holds a tool call with no matching
+ * result later in the transcript.
+ *
+ * an interrupted or errored stream leaves the assistant message -- with its
+ * tool_use / function_call blocks -- in the list, but never runs the tools, so
+ * the next request would carry a dangling call the provider rejects (Anthropic:
+ * every tool_use must be answered by a tool_result). dropping the offending
+ * turn keeps the transcript re-usable.
+ *
+ * in practice only the tail turn is ever affected -- earlier rounds resolved
+ * their calls before the loop continued -- and a turn without tool calls, or
+ * one whose calls are all matched, is left untouched. so this is a no-op on a
+ * clean stream, which is why Stream() can call it unconditionally on exit.
+ *
+ * 'generic' has no tool-result path in Stream()'s loop, so nothing can dangle
+ * there; it is intentionally not handled.
+ */
+export function DropDanglingToolCalls(messages?: TypedChatMessages) {
+
+  if (!messages) { return; }
+
+  switch (messages.type) {
+
+    case 'anthropic': {
+      const resolved = new Set<string>();
+      for (const message of messages.messages) {
+        if (IsClientSideErrorMessage(message)) { continue; }
+        if (Array.isArray(message.content)) {
+          for (const block of message.content) {
+            if (block.type === 'tool_result' && block.tool_use_id) {
+              resolved.add(block.tool_use_id);
+            }
+          }
+        }
+      }
+      messages.messages = messages.messages.filter(message => {
+        if (IsClientSideErrorMessage(message)) { return true; }
+        if (Array.isArray(message.content)) {
+          return !message.content.some(
+            block => block.type === 'tool_use' && !resolved.has(block.id));
+        }
+        return true;
+      });
+      break;
+    }
+
+    case 'openai-responses': {
+      const resolved = new Set<string>();
+      for (const item of messages.messages) {
+        if (IsClientSideErrorMessage(item)) { continue; }
+        if (item.type === 'function_call_output' && item.call_id) {
+          resolved.add(item.call_id);
+        }
+      }
+      messages.messages = messages.messages.filter(item => {
+        if (IsClientSideErrorMessage(item)) { return true; }
+        return !(item.type === 'function_call' && !resolved.has(item.call_id));
+      });
+      break;
+    }
+
+    case 'gemini': {
+      const resolved = new Set<string>();
+      for (const message of messages.messages) {
+        if (IsClientSideErrorMessage(message)) { continue; }
+        for (const part of message.parts ?? []) {
+          const id = part.functionResponse?.id || part.functionResponse?.name;
+          if (part.functionResponse && id) { resolved.add(id); }
+        }
+      }
+      messages.messages = messages.messages.filter(message => {
+        if (IsClientSideErrorMessage(message)) { return true; }
+        return !(message.parts ?? []).some(part => {
+          if (!part.functionCall) { return false; }
+          const id = part.functionCall.id || part.functionCall.name;
+          return !id || !resolved.has(id);
+        });
+      });
+      break;
+    }
+
+  }
+
+}
+
+/**
  * splitting the stream method in two so we can loop if there are tool calls
  */
 export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
@@ -823,78 +909,90 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
 
   if (!params.model) {
     throw new Error('Invalid model');
-  }  
+  }
 
   if (!params.messages || !params.messages.messages.length) {
     throw new Error('no messages');
   }
 
-  for (let round = 0; ; round++) {
+  // whatever path we leave the loop by -- a normal finish, an interrupt, a
+  // watchdog/worker error, or the round cap -- make sure we don't strand a
+  // tool call with no result, which would poison the next request. a clean
+  // turn has nothing unmatched, so this is a no-op there. `continue` (between
+  // tool rounds) stays inside the loop, so this fires exactly once, on exit.
+  try {
 
-    if (round >= MAX_TOOL_CALL_ROUNDS) {
-      params.messages?.messages.push({
-        type: 'client-side-error',
-        message: `stopped after ${MAX_TOOL_CALL_ROUNDS} tool-call rounds without a final response`,
-      });
-      return;
-    }
+    for (let round = 0; ; round++) {
 
-    ClearState(params);
-
-    await StreamInternal(params as Parameters<T>);
-
-    if (interrupted) {
-      console.info("interrupted, returning");
-      return;
-    }
-
-    if (params.tool_calls && params.tool_call_fn) {
-      try {
-        const content = await params.tool_call_fn(params.tool_calls, false);
-        if (content?.length) {
-          if (params.messages?.type === 'gemini') {
-            const next_message = FormatGeminiToolResults(params as Parameters<GeminiChatMessages>, content);
-            if (next_message) {
-              params.messages.messages.push(next_message);
-              continue;
-            }
-          }
-          if (params.messages?.type === 'openai-responses') {
-            const responses = FormatOpenAIResponsesToolResults(params as Parameters<GPTResponsesChatMessages>, content);
-            if (responses.length) {
-              params.messages.messages.push(...responses);
-              continue;
-            }
-          }
-          else if (params.messages?.type === 'anthropic') {
-            const next_message = FormatAnthropicToolResults(params as Parameters<AnthropicChatMessages>, content);
-            if (next_message) {
-              params.messages.messages.push(next_message);
-              continue;
-            }
-          }
-        }
-        else {
-          console.info("content length is 0?");
-        }
-      }
-      catch (err) {
+      if (round >= MAX_TOOL_CALL_ROUNDS) {
         params.messages?.messages.push({
           type: 'client-side-error',
-          message: err?.toString() || 'unknown error (client-side)',
-        })
+          message: `stopped after ${MAX_TOOL_CALL_ROUNDS} tool-call rounds without a final response`,
+        });
+        return;
       }
-    }
-    else {
-      // console.info("returning on no pending tool calls");
-    }
 
-    // console.info("reached end of loop");
+      ClearState(params);
 
-    return;
+      await StreamInternal(params as Parameters<T>);
+
+      if (interrupted) {
+        console.info("interrupted, returning");
+        return;
+      }
+
+      if (params.tool_calls && params.tool_call_fn) {
+        try {
+          const content = await params.tool_call_fn(params.tool_calls, false);
+          if (content?.length) {
+            if (params.messages?.type === 'gemini') {
+              const next_message = FormatGeminiToolResults(params as Parameters<GeminiChatMessages>, content);
+              if (next_message) {
+                params.messages.messages.push(next_message);
+                continue;
+              }
+            }
+            if (params.messages?.type === 'openai-responses') {
+              const responses = FormatOpenAIResponsesToolResults(params as Parameters<GPTResponsesChatMessages>, content);
+              if (responses.length) {
+                params.messages.messages.push(...responses);
+                continue;
+              }
+            }
+            else if (params.messages?.type === 'anthropic') {
+              const next_message = FormatAnthropicToolResults(params as Parameters<AnthropicChatMessages>, content);
+              if (next_message) {
+                params.messages.messages.push(next_message);
+                continue;
+              }
+            }
+          }
+          else {
+            console.info("content length is 0?");
+          }
+        }
+        catch (err) {
+          params.messages?.messages.push({
+            type: 'client-side-error',
+            message: err?.toString() || 'unknown error (client-side)',
+          })
+        }
+      }
+      else {
+        // console.info("returning on no pending tool calls");
+      }
+
+      // console.info("reached end of loop");
+
+      return;
+
+    }
 
   }
- 
+  finally {
+    DropDanglingToolCalls(params.messages);
+  }
+
 }
 
 /** add a user chat message, in the approrpriate API style */
