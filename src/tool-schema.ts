@@ -201,33 +201,39 @@ const BorderOptions = v.object({
 
 // --- SetCells schema (values + styles + borders) ---
 
+// set_cells rejects any target that isn't sheet-qualified: the active sheet
+// can change under the model (the user may switch tabs, and add_sheet may or
+// may not activate the new sheet), so an unqualified write can land anywhere.
+
+const SetCellsReferenceDescription = 'Sheet-qualified cell or range reference (e.g. "Sheet1!A1", "Sheet1!B2:D5"). The sheet name is required; unqualified references (e.g. "A1") and named ranges are rejected. Sheet names containing a space or special character must be single-quoted, e.g. "\'My Sheet\'!A1".';
+
 const CellValueRecord = v.record(
-  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1"). Sheet or named-range identifiers containing a space or special character must be single-quoted, e.g. "\'My Sheet\'!A1".')),
+  v.pipe(v.string(), v.description(SetCellsReferenceDescription)),
   v.union([v.string(), v.number(), v.boolean(), v.array(v.array(CellValue))]),
 );
 
 const StyleRecord = v.record(
-  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1"). Sheet or named-range identifiers containing a space or special character must be single-quoted, e.g. "\'My Sheet\'!A1".')),
+  v.pipe(v.string(), v.description(SetCellsReferenceDescription)),
   StyleObject,
 );
 
 const BorderRecord = v.record(
-  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1"). Sheet or named-range identifiers containing a space or special character must be single-quoted, e.g. "\'My Sheet\'!A1".')),
+  v.pipe(v.string(), v.description(SetCellsReferenceDescription)),
   BorderOptions,
 );
 
 const SetCellsSchema = v.object({
   values: v.optional(v.pipe(
     CellValueRecord,
-    v.description('Cell values to set. Keys are references, values are strings, numbers, booleans, or 2D arrays. Strings starting with "=" are formulas.'),
+    v.description('Cell values to set. Keys are sheet-qualified references, values are strings, numbers, booleans, or 2D arrays. Strings starting with "=" are formulas.'),
   )),
   styles: v.optional(v.pipe(
     StyleRecord,
-    v.description('Cell styles to apply (delta). Keys are references, values are style objects. Only included properties are changed.'),
+    v.description('Cell styles to apply (delta). Keys are sheet-qualified references, values are style objects. Only included properties are changed.'),
   )),
   borders: v.optional(v.pipe(
     BorderRecord,
-    v.description('Cell borders to apply. Keys are references, values are border options.'),
+    v.description('Cell borders to apply. Keys are sheet-qualified references, values are border options.'),
   )),
   auto_resize_columns: v.optional(v.pipe(
     v.array(v.string()),
@@ -333,6 +339,10 @@ const EvaluateSchema = v.object({
 });
 
 const UpdateLayoutSchema = v.object({
+  sheet: v.pipe(
+    v.string(),
+    v.description('Name of the sheet to modify (e.g. "Sheet1"). Required; the active sheet is not used as a default. Pass the plain sheet name, without quotes, even if it contains spaces.'),
+  ),
   action: v.pipe(
     v.picklist([
       'insert_rows', 'insert_columns', 'delete_rows', 'delete_columns',
@@ -355,16 +365,16 @@ const UpdateLayoutSchema = v.object({
       v.description('Number of rows or columns to insert or delete. Defaults to 1. Only used with insert/delete actions.'),
     ),
   ),
-  width: v.optional(
+  width_px: v.optional(
     v.pipe(
       v.number(),
-      v.description('Column width for set_column_width. Omit to auto-size columns to fit content.'),
+      v.description('Column width in pixels for set_column_width (not Excel character units). The default column width is 100 px; allow roughly 7-8 px per character of text, plus some padding. Omit to auto-size columns to fit content.'),
     ),
   ),
-  height: v.optional(
+  height_px: v.optional(
     v.pipe(
       v.number(),
-      v.description('Row height for set_row_height. Omit to auto-size rows to fit content.'),
+      v.description('Row height in pixels for set_row_height (not points). The default row height is 25 px. Omit to auto-size rows to fit content.'),
     ),
   ),
 });
@@ -473,7 +483,7 @@ export const tools = [
   ),
   defineTool(
     'set_cells',
-    'Write values, apply formatting, and/or set borders on spreadsheet cells. Input has three optional blocks: "values" maps references to cell values (strings, numbers, booleans, or 2D arrays — strings starting with "=" are formulas, always use comma as the argument separator), "styles" maps references to style objects (delta apply), and "borders" maps references to border options. At least one block is required. In both the reference keys and inside formulas, sheet or named-range identifiers containing a space or special character must be single-quoted (e.g. "\'My Sheet\'!A1", "=SUM(\'My Sheet\'!A1:A10)"); an unquoted spaced reference will fail to resolve. Optionally include "auto_resize_columns" with an array of column labels (e.g. ["A", "B"]) to auto-fit column widths after changes. Examples: {"values": {"A1": 100}}, {"values": {"A1": "=SUM(B1, B2)"}, "styles": {"A1": {"bold": true}}}, {"borders": {"A1:C3": {"borders": "all"}}}.',
+    'Write values, apply formatting, and/or set borders on spreadsheet cells. Input has three optional blocks: "values" maps references to cell values (strings, numbers, booleans, or 2D arrays — strings starting with "=" are formulas, always use comma as the argument separator), "styles" maps references to style objects (delta apply), and "borders" maps references to border options. At least one block is required. Every reference key MUST include the sheet name (e.g. "Sheet1!A1", not "A1"), even in a single-sheet workbook; the active sheet is not used as a default. If any key is unqualified or cannot be resolved, the whole call is rejected and nothing is written. In both the reference keys and inside formulas, sheet or named-range identifiers containing a space or special character must be single-quoted (e.g. "\'My Sheet\'!A1", "=SUM(\'My Sheet\'!A1:A10)"); an unquoted spaced reference will fail to resolve. References inside formulas may be unqualified; they refer to the sheet containing the formula. Optionally include "auto_resize_columns" with an array of column labels (e.g. ["A", "B"]) to auto-fit column widths after changes. On success, returns "written" (the fully qualified ranges that were targeted) and "active_sheet" (the name of the sheet currently shown to the user). Examples: {"values": {"Sheet1!A1": 100}}, {"values": {"Sheet1!A1": "=SUM(B1, B2)"}, "styles": {"Sheet1!A1": {"bold": true}}}, {"borders": {"\'My Sheet\'!A1:C3": {"borders": "all"}}}.',
     SetCellsSchema,
     /*
     {
@@ -517,7 +527,7 @@ export const tools = [
   ),
   defineTool(
     'update_layout',
-    'Insert or delete rows or columns, or set column widths or row heights in the active sheet. For resize actions, omit width/height to auto-size to fit content.',
+    'Insert or delete rows or columns, or set column widths or row heights on the named sheet. The sheet is required, and an unknown sheet name rejects the call without changing anything. Widths and heights are in pixels (width_px, height_px), not Excel character units or points. For resize actions, omit width_px/height_px to auto-size to fit content; set an explicit width_px when columns should have a consistent width, e.g. in a table.',
     UpdateLayoutSchema,
     { priority: 'low' },
   ),

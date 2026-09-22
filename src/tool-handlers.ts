@@ -3,9 +3,19 @@ import type { ToolCallContent, ToolResultContent } from './chat-message';
 import type { ToolInputMap, ToolName } from './tool-schema';
 import { tools_map } from './tool-schema';
 import * as v from 'valibot';
-import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType } from '@trebco/treb';
+import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType, ICellAddress, IArea } from '@trebco/treb';
 import { ListAnnotations, SummarizeSpreadsheet, transpose } from './support-functions';
 import { parse as pj_parse } from 'partial-json';
+
+/** this is almost certainly already exposed somewhere in TREB/RAW */
+function IsCellAddress(candidate: ICellAddress|IArea): candidate is ICellAddress {
+  return !((candidate as IArea).start);
+}
+
+/** strip the single quotes TREB puts around sheet names that need them */
+function unquoteSheetName(name: string): string {
+  return /^'.*'$/.test(name) ? name.slice(1, -1) : name;
+}
 
 /** placeholder */
 export interface ExternalUI {
@@ -378,37 +388,58 @@ export const handlers: ToolHandler = {
       return ToolError('invalid style', issues);
     }
 
-    // validate every target reference up front. SetRange/ApplyStyle/ApplyBorders
-    // take a RangeReference and silently do nothing when the string doesn't
-    // resolve -- the usual cause is a sheet or named-range name containing a
-    // space that wasn't single-quoted ("My Sheet!A1" instead of "'My Sheet'!A1").
-    // Resolve() returns undefined for exactly those, so we can fail the call
-    // cleanly here instead of writing nowhere and reporting a phantom success.
-    // done before any write so the call stays atomic (as with styles, above).
+    // possibly validate input ranges...
 
-    /*
-    const unresolved: string[] = [];
-    const checked = new Set<string>();
+    const invalid_ranges: string[] = [];
+
+    // normalized, fully qualified form of each valid target, returned on
+    // success so the model can confirm where the write actually landed.
+    // a set, because the same range can appear in more than one block.
+
+    const written = new Set<string>();
+
     for (const block of [input.values, input.styles, input.borders]) {
+
       if (!block) { continue; }
+
       for (const reference of Object.keys(block)) {
-        if (checked.has(reference)) { continue; }
-        checked.add(reference);
-        if (!sheet.Resolve(reference)) {
-          unresolved.push(reference);
+        if (!/\!/.test(reference)) {
+          invalid_ranges.push(reference);
+          continue;
+        }
+
+        const resolved = sheet.Resolve(reference);
+        if (!resolved) {
+          invalid_ranges.push(reference);
+        }
+        else {
+          if (IsCellAddress(resolved)) {
+            if (!resolved.sheet_id) {
+              invalid_ranges.push(reference);
+            }
+          }
+          else {
+            if (!resolved.start.sheet_id) {
+              invalid_ranges.push(reference);
+            }
+          }
+          written.add(sheet.Unresolve(resolved, true, false));
         }
       }
     }
-    if (unresolved.length) {
+
+    // console.info("invalid?", {invalid_ranges});
+
+    if (invalid_ranges.length) {
       return ToolError(
-        'unresolved reference(s): the target address could not be parsed, so '
-        + 'nothing was written. Sheet or named-range identifiers containing a '
-        + 'space or special character must be single-quoted, e.g. write '
-        + '"\'My Sheet\'!A1", not "My Sheet!A1".',
-        unresolved,
-      );
+        'invalid or unqualified reference(s), listed in detail. Nothing was '
+        + 'written. Every reference key must include a sheet name, e.g. '
+        + '"Sheet1!A1", not "A1"; named ranges are not accepted as targets. '
+        + 'Sheet names containing a space or special character must be '
+        + 'single-quoted, e.g. "\'My Sheet\'!A1". Fix every listed reference '
+        + 'and re-send the whole call.',
+        invalid_ranges);
     }
-    */
 
     sheet.Batch(() => {
 
@@ -432,39 +463,10 @@ export const handlers: ToolHandler = {
 
     });
 
-    // the target references resolved, but a formula *value* can still carry an
-    // unresolved reference inside it (again, most often an unquoted spaced sheet
-    // name). SetRange stores such a formula without complaint and it calculates
-    // to #REF!/#NAME?. read the formulas we just wrote back and report any that
-    // errored, so a broken write isn't returned as a bare success. (values are
-    // applied and left in place -- the model should fix and re-send.)
-
-    /*
-    const formula_errors: { reference: string, error: string }[] = [];
-    if (input.values) {
-      for (const [reference, value] of Object.entries(input.values)) {
-        if (typeof value === 'string' && value[0] === '=') {
-          const error = FirstReferenceError(sheet, reference);
-          if (error) {
-            formula_errors.push({ reference, error });
-          }
-        }
-      }
-    }
-    if (formula_errors.length) {
-      return ToolResult({
-        applied: true,
-        warning: 'the values were written, but some formulas calculate to a '
-          + 'reference error. This usually means a sheet or named-range name '
-          + 'containing a space was not single-quoted inside the formula -- '
-          + 'write "\'My Sheet\'!A1", not "My Sheet!A1". Fix the reference and '
-          + 'set the cell again.',
-        cells: formula_errors,
-      });
-    }
-    */
-
-    return ToolResult({});
+    return ToolResult({
+      written: Array.from(written),
+      active_sheet: sheet.active_sheet,
+    });
   },
   get_style(sheet, ui, input) {
     const result = sheet.GetStyle(input.reference, true);
@@ -541,20 +543,54 @@ export const handlers: ToolHandler = {
   },
   add_chart: AddChart,
   update_layout(sheet, _ui, input) {
+
+    // the layout API (InsertRows, SetColumnWidth, ...) only operates on the
+    // active sheet, so we activate the target, apply, and switch back.
+    //
+    // validate the name first: ActivateSheet silently falls back to the
+    // first sheet when a name doesn't match, which would apply the change to
+    // the wrong sheet. names match case-insensitively (as TREB does), and we
+    // tolerate the quoted form ("'My Sheet'") since models use it elsewhere.
+
+    const requested = unquoteSheetName(input.sheet);
+    const target = sheet.ListSheets().find(
+      entry => entry.name.toLocaleUpperCase() === requested.toLocaleUpperCase());
+
+    if (!target) {
+      return ToolError(
+        `unknown sheet "${input.sheet}". Nothing was changed. Use list_sheets `
+        + 'to get the exact sheet names.');
+    }
+
+    // active_sheet is quoted when the name needs it; ActivateSheet wants the
+    // plain name.
+
+    const previous = unquoteSheetName(sheet.active_sheet);
+
     const count = input.count ?? 1;
     // Schema declares 1-based indices; the spreadsheet API uses 0-based.
     const index0 = Array.isArray(input.index)
       ? input.index.map(i => i - 1)
       : input.index - 1;
-    switch (input.action) {
-      case 'insert_rows':      sheet.InsertRows(index0 as number, count); break;
-      case 'insert_columns':   sheet.InsertColumns(index0 as number, count); break;
-      case 'delete_rows':      sheet.DeleteRows(index0 as number, count); break;
-      case 'delete_columns':   sheet.DeleteColumns(index0 as number, count); break;
-      case 'set_column_width': sheet.SetColumnWidth(index0, input.width); break;
-      case 'set_row_height':   sheet.SetRowHeight(index0, input.height); break;
+
+    sheet.ActivateSheet(target.name);
+    try {
+      switch (input.action) {
+        case 'insert_rows':      sheet.InsertRows(index0 as number, count); break;
+        case 'insert_columns':   sheet.InsertColumns(index0 as number, count); break;
+        case 'delete_rows':      sheet.DeleteRows(index0 as number, count); break;
+        case 'delete_columns':   sheet.DeleteColumns(index0 as number, count); break;
+        case 'set_column_width': sheet.SetColumnWidth(index0, input.width_px); break;
+        case 'set_row_height':   sheet.SetRowHeight(index0, input.height_px); break;
+      }
     }
-    return ToolResult({});
+    finally {
+      if (previous.toLocaleUpperCase() !== target.name.toLocaleUpperCase()) {
+        sheet.ActivateSheet(previous);
+      }
+    }
+
+    return ToolResult({ sheet: target.name });
   },
   conditional_format(sheet, _ui, input) {
     const defaultStyle: CellStyle = {
