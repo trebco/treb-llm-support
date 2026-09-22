@@ -246,6 +246,41 @@ const ToolError = (message: string, detail?: unknown): ToolHandlerErrorType => (
   content: detail === undefined ? { message } : { message, detail },
 });
 
+/**
+ * scan a just-written cell/range and return the first reference error we find,
+ * or undefined. SetRange stores a formula string even when the parser can't
+ * resolve a reference inside it -- most often a sheet or named-range name with
+ * a space that wasn't single-quoted -- and neither throws nor signals; the cell
+ * simply calculates to #NAME?/#REF!. we read the range back to notice that.
+ *
+ * we look only for the reference/parse errors (#REF!, #NAME?), which are the
+ * signature of a bad or unquoted reference. other errors (#VALUE!, #DIV/0!, ...)
+ * are frequently intended, and #DATA is the *expected* "no simulation yet"
+ * state for RiskAMP statistics functions -- flagging those would be noise.
+ *
+ * we check formatted values (an error cell's display string is its token) and
+ * raw string values, so we catch it whichever way GetRange surfaces the error.
+ */
+function FirstReferenceError(sheet: EmbeddedSpreadsheet, reference: string): string | undefined {
+  const scan = (value: CellValue | CellValue[] | CellValue[][] | undefined): string | undefined => {
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const found = scan(entry);
+        if (found) { return found; }
+      }
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      const token = value.trim().toUpperCase();
+      if (token.startsWith('#REF') || token.startsWith('#NAME')) {
+        return value.trim();
+      }
+    }
+    return undefined;
+  };
+  return scan(sheet.GetRange(reference, { type: 'formatted' })) ?? scan(sheet.GetRange(reference));
+}
+
 /** support function for charts */
 function ComposeSeries(series: { values: string, labels?: string, title?: string}) {
 
@@ -343,6 +378,36 @@ export const handlers: ToolHandler = {
       return ToolError('invalid style', issues);
     }
 
+    // validate every target reference up front. SetRange/ApplyStyle/ApplyBorders
+    // take a RangeReference and silently do nothing when the string doesn't
+    // resolve -- the usual cause is a sheet or named-range name containing a
+    // space that wasn't single-quoted ("My Sheet!A1" instead of "'My Sheet'!A1").
+    // Resolve() returns undefined for exactly those, so we can fail the call
+    // cleanly here instead of writing nowhere and reporting a phantom success.
+    // done before any write so the call stays atomic (as with styles, above).
+
+    const unresolved: string[] = [];
+    const checked = new Set<string>();
+    for (const block of [input.values, input.styles, input.borders]) {
+      if (!block) { continue; }
+      for (const reference of Object.keys(block)) {
+        if (checked.has(reference)) { continue; }
+        checked.add(reference);
+        if (!sheet.Resolve(reference)) {
+          unresolved.push(reference);
+        }
+      }
+    }
+    if (unresolved.length) {
+      return ToolError(
+        'unresolved reference(s): the target address could not be parsed, so '
+        + 'nothing was written. Sheet or named-range identifiers containing a '
+        + 'space or special character must be single-quoted, e.g. write '
+        + '"\'My Sheet\'!A1", not "My Sheet!A1".',
+        unresolved,
+      );
+    }
+
     if (input.values) {
       for (const [reference, value] of Object.entries(input.values)) {
         sheet.SetRange(reference, value, { argument_separator: ',' });
@@ -360,6 +425,37 @@ export const handlers: ToolHandler = {
       const indices = input.auto_resize_columns.map(columnLabelToIndex);
       sheet.SetColumnWidth(indices, undefined, false);
     }
+
+    // the target references resolved, but a formula *value* can still carry an
+    // unresolved reference inside it (again, most often an unquoted spaced sheet
+    // name). SetRange stores such a formula without complaint and it calculates
+    // to #REF!/#NAME?. read the formulas we just wrote back and report any that
+    // errored, so a broken write isn't returned as a bare success. (values are
+    // applied and left in place -- the model should fix and re-send.)
+
+    const formula_errors: { reference: string, error: string }[] = [];
+    if (input.values) {
+      for (const [reference, value] of Object.entries(input.values)) {
+        if (typeof value === 'string' && value[0] === '=') {
+          const error = FirstReferenceError(sheet, reference);
+          if (error) {
+            formula_errors.push({ reference, error });
+          }
+        }
+      }
+    }
+    if (formula_errors.length) {
+      return ToolResult({
+        applied: true,
+        warning: 'the values were written, but some formulas calculate to a '
+          + 'reference error. This usually means a sheet or named-range name '
+          + 'containing a space was not single-quoted inside the formula -- '
+          + 'write "\'My Sheet\'!A1", not "My Sheet!A1". Fix the reference and '
+          + 'set the cell again.',
+        cells: formula_errors,
+      });
+    }
+
     return ToolResult({});
   },
   get_style(sheet, ui, input) {

@@ -67,7 +67,7 @@ const GetCellsSchema = v.object({
       v.string(),
       v.array(v.string()),
     ]),
-    v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1"), or an array of references to fetch multiple ranges at once.'),
+    v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1"), or an array of references to fetch multiple ranges at once. Sheet or named-range identifiers containing a space or special character must be single-quoted, e.g. "\'My Sheet\'!A1".'),
   ),
   values: v.optional(
     v.pipe(
@@ -202,17 +202,17 @@ const BorderOptions = v.object({
 // --- SetCells schema (values + styles + borders) ---
 
 const CellValueRecord = v.record(
-  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1")')),
+  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1"). Sheet or named-range identifiers containing a space or special character must be single-quoted, e.g. "\'My Sheet\'!A1".')),
   v.union([v.string(), v.number(), v.boolean(), v.array(v.array(CellValue))]),
 );
 
 const StyleRecord = v.record(
-  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1")')),
+  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1"). Sheet or named-range identifiers containing a space or special character must be single-quoted, e.g. "\'My Sheet\'!A1".')),
   StyleObject,
 );
 
 const BorderRecord = v.record(
-  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1")')),
+  v.pipe(v.string(), v.description('Cell or range reference (e.g. "A1", "B2:D5", "Sheet1!A1"). Sheet or named-range identifiers containing a space or special character must be single-quoted, e.g. "\'My Sheet\'!A1".')),
   BorderOptions,
 );
 
@@ -473,7 +473,7 @@ export const tools = [
   ),
   defineTool(
     'set_cells',
-    'Write values, apply formatting, and/or set borders on spreadsheet cells. Input has three optional blocks: "values" maps references to cell values (strings, numbers, booleans, or 2D arrays — strings starting with "=" are formulas, always use comma as the argument separator), "styles" maps references to style objects (delta apply), and "borders" maps references to border options. At least one block is required. Optionally include "auto_resize_columns" with an array of column labels (e.g. ["A", "B"]) to auto-fit column widths after changes. Examples: {"values": {"A1": 100}}, {"values": {"A1": "=SUM(B1, B2)"}, "styles": {"A1": {"bold": true}}}, {"borders": {"A1:C3": {"borders": "all"}}}.',
+    'Write values, apply formatting, and/or set borders on spreadsheet cells. Input has three optional blocks: "values" maps references to cell values (strings, numbers, booleans, or 2D arrays — strings starting with "=" are formulas, always use comma as the argument separator), "styles" maps references to style objects (delta apply), and "borders" maps references to border options. At least one block is required. In both the reference keys and inside formulas, sheet or named-range identifiers containing a space or special character must be single-quoted (e.g. "\'My Sheet\'!A1", "=SUM(\'My Sheet\'!A1:A10)"); an unquoted spaced reference will fail to resolve. Optionally include "auto_resize_columns" with an array of column labels (e.g. ["A", "B"]) to auto-fit column widths after changes. Examples: {"values": {"A1": 100}}, {"values": {"A1": "=SUM(B1, B2)"}, "styles": {"A1": {"bold": true}}}, {"borders": {"A1:C3": {"borders": "all"}}}.',
     SetCellsSchema,
     {
       supports_partial_application: true,
@@ -510,7 +510,7 @@ export const tools = [
   ),
   defineTool(
     'evaluate',
-    'Evaluate a spreadsheet formula and return the result. The formula is evaluated in the context of the current spreadsheet. Use sheet-qualified references (e.g. "Sheet1!A1") to avoid ambiguity. Always use comma as the argument separator (e.g. "=SUM(A1, A2)", not "=SUM(A1; A2)").',
+    'Evaluate a spreadsheet formula and return the result. The formula is evaluated in the context of the current spreadsheet. Use sheet-qualified references (e.g. "Sheet1!A1") to avoid ambiguity; single-quote any sheet or named-range identifier that contains a space or special character, e.g. "\'My Sheet\'!A1". Always use comma as the argument separator (e.g. "=SUM(A1, A2)", not "=SUM(A1; A2)").',
     EvaluateSchema,
   ),
   defineTool(
