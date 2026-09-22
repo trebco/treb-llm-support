@@ -475,9 +475,11 @@ export const tools = [
     'set_cells',
     'Write values, apply formatting, and/or set borders on spreadsheet cells. Input has three optional blocks: "values" maps references to cell values (strings, numbers, booleans, or 2D arrays — strings starting with "=" are formulas, always use comma as the argument separator), "styles" maps references to style objects (delta apply), and "borders" maps references to border options. At least one block is required. In both the reference keys and inside formulas, sheet or named-range identifiers containing a space or special character must be single-quoted (e.g. "\'My Sheet\'!A1", "=SUM(\'My Sheet\'!A1:A10)"); an unquoted spaced reference will fail to resolve. Optionally include "auto_resize_columns" with an array of column labels (e.g. ["A", "B"]) to auto-fit column widths after changes. Examples: {"values": {"A1": 100}}, {"values": {"A1": "=SUM(B1, B2)"}, "styles": {"A1": {"bold": true}}}, {"borders": {"A1:C3": {"borders": "all"}}}.',
     SetCellsSchema,
+    /*
     {
       supports_partial_application: true,
     }
+    */
   ),
   defineTool(
     'list_sheets',

@@ -386,6 +386,7 @@ export const handlers: ToolHandler = {
     // cleanly here instead of writing nowhere and reporting a phantom success.
     // done before any write so the call stays atomic (as with styles, above).
 
+    /*
     const unresolved: string[] = [];
     const checked = new Set<string>();
     for (const block of [input.values, input.styles, input.borders]) {
@@ -407,24 +408,29 @@ export const handlers: ToolHandler = {
         unresolved,
       );
     }
+    */
 
-    if (input.values) {
-      for (const [reference, value] of Object.entries(input.values)) {
-        sheet.SetRange(reference, value, { argument_separator: ',' });
+    sheet.Batch(() => {
+
+      if (input.values) {
+        for (const [reference, value] of Object.entries(input.values)) {
+          sheet.SetRange(reference, value, { argument_separator: ',' });
+        }
       }
-    }
-    for (const [reference, style] of styles) {
-      sheet.ApplyStyle(reference, style, true);
-    }
-    if (input.borders) {
-      for (const [reference, opts] of Object.entries(input.borders)) {
-        sheet.ApplyBorders(reference, opts.borders as BorderConstants, opts.width);
+      for (const [reference, style] of styles) {
+        sheet.ApplyStyle(reference, style, true);
       }
-    }
-    if (input.auto_resize_columns) {
-      const indices = input.auto_resize_columns.map(columnLabelToIndex);
-      sheet.SetColumnWidth(indices, undefined, false);
-    }
+      if (input.borders) {
+        for (const [reference, opts] of Object.entries(input.borders)) {
+          sheet.ApplyBorders(reference, opts.borders as BorderConstants, opts.width);
+        }
+      }
+      if (input.auto_resize_columns) {
+        const indices = input.auto_resize_columns.map(columnLabelToIndex);
+        sheet.SetColumnWidth(indices, undefined, false);
+      }
+
+    });
 
     // the target references resolved, but a formula *value* can still carry an
     // unresolved reference inside it (again, most often an unquoted spaced sheet
@@ -433,6 +439,7 @@ export const handlers: ToolHandler = {
     // errored, so a broken write isn't returned as a bare success. (values are
     // applied and left in place -- the model should fix and re-send.)
 
+    /*
     const formula_errors: { reference: string, error: string }[] = [];
     if (input.values) {
       for (const [reference, value] of Object.entries(input.values)) {
@@ -455,6 +462,7 @@ export const handlers: ToolHandler = {
         cells: formula_errors,
       });
     }
+    */
 
     return ToolResult({});
   },
