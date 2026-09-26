@@ -110,6 +110,21 @@ export type Parameters<T extends TypedChatMessages = TypedChatMessages> =
   /** callback tool handler */
   tool_call_fn?: (args: GenericToolCall[], partial?: boolean) => Promise<IndexedToolResult[]>;
 
+  /**
+   * called after each batch of writes to `messages`, with that same object.
+   *
+   * Stream() edits `messages` in place, which is all a consumer holding a
+   * plain object (or a proxy that accepts direct writes) needs. a consumer
+   * whose state can't be written that way -- e.g. a store that only accepts
+   * writes through a setter -- passes a plain working copy as `messages`
+   * and copies it back into its own state here. the object keeps being
+   * edited after this returns, so take a copy, don't keep a reference.
+   *
+   * (method syntax on purpose: it keeps Parameters<T> bivariant in T, which
+   * the per-provider casts in StreamInternal rely on.)
+   */
+  changed?(messages: T): void;
+
 };
 
 /**
@@ -128,6 +143,22 @@ function ClearState<T extends TypedChatMessages = TypedChatMessages>(params: Par
   params.message_complete = false;
   params.stop_reason = undefined;
 
+}
+
+/**
+ * tell the consumer `messages` changed. guarded: this is consumer code, and
+ * it's called from paths that must not throw (the stream promise's settle
+ * paths, and Stream()'s finally).
+ */
+function Notify<T extends TypedChatMessages = TypedChatMessages>(params: Partial<Parameters<T>>) {
+  if (params.changed && params.messages) {
+    try {
+      params.changed(params.messages);
+    }
+    catch (err) {
+      console.error(err);
+    }
+  }
 }
 
 export function GenerateImageBlockContent(result: ToolHandlerImageResponseType): Anthropic.ToolResultBlockParam['content'] {
@@ -929,6 +960,7 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
           type: 'client-side-error',
           message: `stopped after ${MAX_TOOL_CALL_ROUNDS} tool-call rounds without a final response`,
         });
+        Notify(params);
         return;
       }
 
@@ -949,6 +981,7 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
               const next_message = FormatGeminiToolResults(params as Parameters<GeminiChatMessages>, content);
               if (next_message) {
                 params.messages.messages.push(next_message);
+                Notify(params);
                 continue;
               }
             }
@@ -956,6 +989,7 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
               const responses = FormatOpenAIResponsesToolResults(params as Parameters<GPTResponsesChatMessages>, content);
               if (responses.length) {
                 params.messages.messages.push(...responses);
+                Notify(params);
                 continue;
               }
             }
@@ -963,6 +997,7 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
               const next_message = FormatAnthropicToolResults(params as Parameters<AnthropicChatMessages>, content);
               if (next_message) {
                 params.messages.messages.push(next_message);
+                Notify(params);
                 continue;
               }
             }
@@ -975,7 +1010,8 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
           params.messages?.messages.push({
             type: 'client-side-error',
             message: err?.toString() || 'unknown error (client-side)',
-          })
+          });
+          Notify(params);
         }
       }
       else {
@@ -991,6 +1027,7 @@ export async function Stream<T extends TypedChatMessages = TypedChatMessages>(
   }
   finally {
     DropDanglingToolCalls(params.messages);
+    Notify(params);
   }
 
 }
@@ -1049,6 +1086,19 @@ async function StreamInternal<T extends TypedChatMessages = TypedChatMessages>(
     const ProcessStack = () => {
       const temp = [...message_stack];
       message_stack = [];
+      try {
+        ProcessChunks(temp);
+      }
+      finally {
+        // notify even if a chunk threw part-way: whatever was applied before
+        // the throw is in `messages`, and the consumer should see it.
+        if (temp.length) {
+          Notify(params);
+        }
+      }
+    };
+
+    const ProcessChunks = (temp: MessageType[]) => {
       for (const message of temp) {
         switch (message?.type) {
 
@@ -1111,9 +1161,10 @@ async function StreamInternal<T extends TypedChatMessages = TypedChatMessages>(
 
       /**
        * report a client-side failure in the transcript, at most once per
-       * stream. guarded, because this is a store write in the consuming app
-       * and can run reactive effects that throw -- and it's called from the
-       * paths that exist precisely because something already threw.
+       * stream. guarded, because this may be a store write in the consuming
+       * app and can run reactive effects that throw -- and it's called from
+       * the paths that exist precisely because something already threw.
+       * (Notify is guarded on its own.)
        */
       const Report = (message: string) => {
         if (reported) { return; }
@@ -1133,6 +1184,7 @@ async function StreamInternal<T extends TypedChatMessages = TypedChatMessages>(
         catch (err) {
           console.error(err);
         }
+        Notify(params);
       };
 
       /** (re)arm the idle watchdog -- see WATCHDOG_IDLE_MS */
