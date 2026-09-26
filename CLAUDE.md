@@ -42,3 +42,4 @@ Uses **bun** as the package manager (not npm). There is no build step -- consume
 - Gemini requires a `name` field on tool results and `thoughtSignature` on content blocks -- these are stripped before sending to Anthropic
 - OpenAI-compatible providers (DeepSeek, Together, OpenRouter, Kimi) all use the OpenAI SDK with custom `baseURL`
 - Layout operations use **1-based** indices in the tool schema, converted to 0-based internally
+- `Stream()` edits `params.messages` **in place**, and calls the optional `params.changed(messages)` hook after each batch of writes (chunk drain, tool-result push, error report, exit cleanup). Consumers whose state only accepts writes through a setter (e.g. a Solid store) pass a plain working copy and copy it back in `changed`. Any new write to `messages` in `stream.ts` must be followed by `Notify(params)`, or those consumers won't see it
