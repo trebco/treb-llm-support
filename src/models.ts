@@ -203,8 +203,8 @@ const list = [
   // ---
 
   {
-    label: 'Claude Sonnet 5',
-    name: 'claude-sonnet-5',
+    label: 'Claude Sonnet 5.5',
+    name: 'claude-sonnet-5-5',
     provider: anthropic_provider,
     cost: {
       input: 2.00,
