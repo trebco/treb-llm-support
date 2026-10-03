@@ -234,8 +234,8 @@ const list = [
   */
 
   {
-    name: 'gpt-5.6-terra',
-    label: 'GPT 5.6 Terra',
+    name: 'gpt-6.1-sol',
+    label: 'GPT 6.1 Sol',
     provider: openai_provider,
     cost: {
       input: 2,
@@ -244,8 +244,8 @@ const list = [
   },
 
   {
-    name: 'gpt-5.6-luna',
-    label: 'GPT 5.6 Luna',
+    name: 'gpt-6-luna',
+    label: 'GPT 6 Luna',
     provider: openai_provider,
     cost: {
       input: 0.20,
