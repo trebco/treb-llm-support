@@ -1,5 +1,5 @@
 
-import type { ToolHandlerResponseType } from './tool-handlers';
+import type { ToolHandlerResponseType } from './tool-result';
 
 export interface TextContent {
   type: 'text';

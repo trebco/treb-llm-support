@@ -1,4 +1,4 @@
-import { tools } from './src/tool-schema';
+import { tools } from './src/treb/tools';
 
 const anthropicTools = tools.map(({ options, ...rest }) => rest);
 const json = JSON.stringify(anthropicTools, null, 2);

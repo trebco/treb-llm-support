@@ -1,7 +1,8 @@
 
-import type { ToolCallContent, ToolResultContent } from './chat-message';
-import type { ToolInputMap, ToolName } from './tool-schema';
-import { tools_map } from './tool-schema';
+import type { ToolCallContent, ToolResultContent } from '../core/chat-message';
+import type { ToolHandlerErrorType, ToolHandlerGenericResposneType, ToolHandlerResponseType } from '../core/tool-result';
+import type { ToolInputMap, ToolName } from './tools';
+import { tools_map } from './tools';
 import * as v from 'valibot';
 import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType, ICellAddress, IArea } from '@trebco/treb';
 import { ListAnnotations, SummarizeSpreadsheet, transpose } from './support-functions';
@@ -24,27 +25,6 @@ export interface ExternalUI {
   Screenshot: (sheet: EmbeddedSpreadsheet) => Promise<string>;
 
 }
-
-export type ToolHandlerImageResponseType = {
-  type: 'image',
-  image_uri: string;
-  content?: unknown;
-};
-
-export type ToolHandlerGenericResposneType = {
-  type: 'object',
-  content: unknown,
-};
-
-export type ToolHandlerErrorType = {
-  type: 'error',
-  content: unknown,
-};
-
-export type ToolHandlerResponseType = 
-  ToolHandlerGenericResposneType | 
-  ToolHandlerImageResponseType |
-  ToolHandlerErrorType ;
 
 type ToolHandler = {
   [K in ToolName]: (sheet: EmbeddedSpreadsheet, ui: ExternalUI, input: ToolInputMap[K]) => ToolHandlerResponseType|Promise<ToolHandlerResponseType>;

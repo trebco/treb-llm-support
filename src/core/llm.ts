@@ -2,8 +2,8 @@
 import { Anthropic } from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenAI, type GenerateContentParameters, type Content as GeminiContent } from '@google/genai';
-import { ToolDefinition, toAnthropicTools, toGeminiFunctionDeclarations, toOpenAIChatCompletionTools, toOpenAIResponsesTools } from './tool-schema';
-import { ToolHandlerImageResponseType, ToolHandlerResponseType } from './tool-handlers';
+import { ToolDefinition, toAnthropicTools, toGeminiFunctionDeclarations, toOpenAIChatCompletionTools, toOpenAIResponsesTools } from './tool-definition';
+import { ToolHandlerImageResponseType, ToolHandlerResponseType } from './tool-result';
 import { AnthropicChatMessages, ClientSideErrorMessage, GeminiChatMessages, GPTResponsesChatMessages, IsClientSideErrorMessage, IsNotClientSideErrorMessage } from './stream';
 import { MessageParam } from '@anthropic-ai/sdk/resources';
 

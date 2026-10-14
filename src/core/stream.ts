@@ -14,9 +14,9 @@ import OpenAI from 'openai';
 
 import type { InitMessage, MessageType } from './llm-worker';
 import type { Model } from './models';
-import { ToolDefinition } from './tool-schema';
+import { ToolDefinition } from './tool-definition';
 import { MessageParam, TextBlockParam, ThinkingBlockParam, ToolUseBlockParam } from '@anthropic-ai/sdk/resources';
-import { ToolHandlerImageResponseType, ToolHandlerResponseType } from './tool-handlers';
+import { ToolHandlerImageResponseType, ToolHandlerResponseType } from './tool-result';
 
 import type { Content as GeminiContent, GenerateContentResponse as GeminiResponseChunk } from '@google/genai';
 
@@ -1229,7 +1229,7 @@ async function StreamInternal<T extends TypedChatMessages = TypedChatMessages>(
 
             // settle *before* draining the stack. ProcessStack() runs
             // consumer code -- reactive renders, and partial tool
-            // application, which calls into the spreadsheet synchronously --
+            // application, which calls into the app synchronously (e.g. into a spreadsheet) --
             // so it can throw, and a throw used to mean we never reached
             // resolve(). resolve() only queues the awaiting continuation,
             // so the drain below still runs to completion first; we just

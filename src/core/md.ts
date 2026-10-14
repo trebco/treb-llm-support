@@ -9,14 +9,13 @@ export interface FormatConfig {
   /**
    * how a fenced code block with a highlight.js-recognized language renders.
    *
-   * `true` (default) keeps the legacy behavior: a collapsible
-   * `<div class="code-container"><details class="hljs">…</details></div>`
-   * disclosure -- a holdover from the inline-JSON -> spreadsheet renderer.
+   * `false` (default) renders a plain, always-visible
+   * `<pre><code class="hljs …">`.
    *
-   * `false` renders a plain, always-visible `<pre><code class="hljs …">`
-   * instead. opt in per consumer (e.g. `formatConfig.collapsibleCodeBlocks =
-   * false`); the callback reads this at render time, so it can be set any time
-   * before Format() is called. left `true` so existing clients are unaffected.
+   * `true` renders a collapsible
+   * `<div class="code-container"><details class="hljs">…</details></div>`
+   * disclosure. the callback reads this at render time, so it can be set any
+   * time before Format() is called.
    */
   collapsibleCodeBlocks: boolean;
 
@@ -24,7 +23,7 @@ export interface FormatConfig {
 
 /** mutable, module-level render config for Format(). see FormatConfig. */
 export const formatConfig: FormatConfig = {
-  collapsibleCodeBlocks: true,
+  collapsibleCodeBlocks: false,
 };
 
 const md = markdownit({
