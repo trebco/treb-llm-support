@@ -5,21 +5,64 @@ import { Anthropic } from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenAI, GenerateContentResponse as GeminiChunk } from '@google/genai';
 
-import type { Model } from './models';
+import { ResolveProvider, type Model, type Provider } from './models';
 import { ToolDefinition } from './tool-definition';
 import { TypedChatMessages } from './stream';
 
 const DEFAULT_MAX_TOKENS = 8192;
 
-let kimi: OpenAI|undefined;
-// let deepseek: OpenAI|undefined;
-let deepseek: Anthropic|undefined;
-let openai: OpenAI|undefined;
-let anthropic: Anthropic|undefined;
-let together: OpenAI|undefined;
-let localhost: Anthropic|undefined;
-let openrouter: OpenAI|undefined;
-let gemini: GoogleGenAI|undefined;
+type Client = Anthropic|OpenAI|GoogleGenAI;
+
+/** 
+ * clients are reused across requests while the api, endpoint and key 
+ * stay the same 
+ */
+const clients = new Map<string, Client>();
+
+/** 
+ * create (or reuse) the client for a provider. the provider says which 
+ * API it speaks and where; see Provider.api and Provider.base_url.
+ */
+function GetClient(provider: Provider, key: string): Client|undefined {
+
+  const cache_key = JSON.stringify([provider.api, provider.base_url ?? '', key]);
+  let client = clients.get(cache_key);
+  if (client) {
+    return client;
+  }
+
+  switch (provider.api) {
+    case 'anthropic':
+      client = new Anthropic({
+        apiKey: key,
+        baseURL: provider.base_url,
+        dangerouslyAllowBrowser: true,
+      });
+      break;
+
+    case 'openai-responses':
+    case 'openai-chat-completion':
+      client = new OpenAI({
+        apiKey: key,
+        baseURL: provider.base_url,
+        dangerouslyAllowBrowser: true,
+      });
+      break;
+
+    case 'gemini':
+      client = new GoogleGenAI({
+        apiKey: key,
+        httpOptions: provider.base_url ? { baseUrl: provider.base_url } : undefined,
+      });
+      break;
+  }
+
+  if (client) {
+    clients.set(cache_key, client);
+  }
+  return client;
+
+}
 
 export interface InitMessage {
   type: 'init2';
@@ -77,112 +120,11 @@ const Post = (message: MessageType) => {
 
 const Init = async (message: InitMessage) => {
 
-  let instance: Anthropic|OpenAI|GoogleGenAI|undefined;
-  let openai_legacy_api = true;
+  const provider = ResolveProvider(message.model.provider);
+  const instance = GetClient(provider, message.key);
 
-  switch (message.model.provider.name) {
-    case 'Localhost':
-
-      if (!localhost || localhost.apiKey !== message.key) {
-        localhost = new Anthropic({
-          apiKey: message.key,
-          baseURL: "http://localhost:8080/",
-          dangerouslyAllowBrowser: true,
-        });
-      }
-      instance = localhost;
-      break;
-
-    case 'Anthropic':
-      if (!anthropic || anthropic.apiKey !== message.key) {
-        anthropic = new Anthropic({
-          apiKey: message.key,
-          dangerouslyAllowBrowser: true,
-        });
-      }
-      instance = anthropic;
-      break;
-
-    case 'Deepseek':
-      if (!deepseek || deepseek.apiKey !== message.key) {
-        deepseek = new Anthropic({
-          apiKey: message.key,
-          baseURL: 'https://api.deepseek.com/anthropic',
-          dangerouslyAllowBrowser: true,
-        });
-      }
-      instance = deepseek;
-      break;
-
-    case 'Together':
-      if (!together || together.apiKey !== message.key) {
-        together = new OpenAI({
-          apiKey: message.key,
-          baseURL: "https://api.together.xyz/v1",
-          dangerouslyAllowBrowser: true,
-        });
-      }
-      instance = together;
-      break;
-
-    case 'OpenRouter':
-      if (!openrouter || openrouter.apiKey !== message.key) {
-        openrouter = new OpenAI({
-        baseURL: "https://openrouter.ai/api/v1",
-        apiKey: message.key,
-          dangerouslyAllowBrowser: true,
-        });
-      }
-      instance = openrouter;
-      break;
-
-    case 'Kimi':
-      if (!kimi || kimi.apiKey !== message.key) {
-        kimi = new OpenAI({
-          apiKey: message.key,
-          baseURL: 'https://api.moonshot.ai',
-          dangerouslyAllowBrowser: true,
-        });
-      }
-      instance = kimi;
-      break;
-
-    /*
-    case 'Deepseek':
-      if (!deepseek || deepseek.apiKey !== message.key) {
-        deepseek = new OpenAI({
-          apiKey: message.key,
-          baseURL: 'https://api.deepseek.com',
-          dangerouslyAllowBrowser: true,
-        });
-      }
-      instance = deepseek;
-      break;
-      */
-
-    case 'OpenAI':
-      if (!openai || openai.apiKey !== message.key) {
-        openai = new OpenAI({
-          apiKey: message.key,
-          dangerouslyAllowBrowser: true,
-        });
-      }
-      instance = openai;
-      openai_legacy_api = false;
-      break;
-
-    case 'Gemini': // old name
-    case 'Google':
-      if (!gemini) {
-        gemini = new GoogleGenAI({
-          apiKey: message.key,
-        });
-      }
-      instance = gemini;
-      break;
-
-
-  }
+  // the chat completions API is the "legacy" path, currently not implemented
+  const openai_legacy_api = provider.api === 'openai-chat-completion';
 
   if (!instance) {
     Post({

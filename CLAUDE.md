@@ -37,7 +37,7 @@ Uses **bun** as the package manager (not npm). There is no build step -- consume
 | `core/tool-result.ts` | `ToolHandlerResponseType` (object / image / error) |
 | `core/tool-executor.ts` | `CreateToolExecutor`, `StripNullProperties` |
 | `core/chat-message.ts` | `ToolCallContent` / `ToolResultContent` |
-| `core/models.ts` | Model/provider registry with per-model cost info |
+| `core/models.ts` | Model/provider registry: `Models` (live array), `SetModels`, `FindModel`, `DefaultModels`, `ModelSchema`, `ResolveProvider` |
 | `core/md.ts` | Markdown rendering (markdown-it + highlight.js + KaTeX), `formatConfig` |
 | `treb/tools.ts` | TREB tool catalogue: `tools`, `tools_map`, `ToolName`, `ToolInputMap` |
 | `treb/tool-handlers.ts` | Handlers that run tool calls against the TREB spreadsheet API; `ExternalUI` |
@@ -49,6 +49,8 @@ Uses **bun** as the package manager (not npm). There is no build step -- consume
 - Tool schemas are defined with **Valibot** and converted to JSON Schema for the APIs. The canonical format is Anthropic's `input_schema` shape
 - Tool inputs use **comma** as the formula argument separator (not semicolon)
 - Gemini requires a `name` field on tool results and `thoughtSignature` on content blocks -- these are stripped before sending to Anthropic
-- OpenAI-compatible providers (DeepSeek, Together, OpenRouter, Kimi) all use the OpenAI SDK with custom `baseURL`
+- The worker picks the SDK from `provider.api` and the endpoint from `provider.base_url` -- never from the provider name. Adding a compatible provider is data, not code
+- Models are pluggable: apps call `SetModels(list)` (validated with `ModelSchema`, throws on bad input or duplicate names, leaves the list unchanged on failure). `Models` is replaced **in place**, so don't reassign it; code that derived lists from it must rebuild
+- Apps persist whole `Model` objects and send them to the worker, so the worker must cope with old shapes. `ResolveProvider` fills `api`/`base_url` from the built-in provider of the same name when `base_url` is missing
 - Layout operations use **1-based** indices in the tool schema, converted to 0-based internally
 - `Stream()` edits `params.messages` **in place**, and calls the optional `params.changed(messages)` hook after each batch of writes (chunk drain, tool-result push, error report, exit cleanup). Consumers whose state only accepts writes through a setter (e.g. a Solid store) pass a plain working copy and copy it back in `changed`. Any new write to `messages` in `core/stream.ts` must be followed by `Notify(params)`, or those consumers won't see it

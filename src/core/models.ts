@@ -1,4 +1,6 @@
 
+import * as v from 'valibot';
+
 export interface ModelFeatures {
   image_support_in_tools: boolean;
   tool_search: boolean;
@@ -9,7 +11,17 @@ export interface Provider {
   website: string;
   models?: string;
   default_features: Partial<ModelFeatures>;
+
+  /** which API (and SDK) the provider speaks. the worker routes on this */
   api: 'anthropic'|'gemini'|'openai-responses'|'openai-chat-completion';
+
+  /** 
+   * endpoint, if not the SDK's default. this is what lets an app point a
+   * provider at a compatible API (deepseek, a local server) without changes
+   * here.
+   */
+  base_url?: string;
+
 }
 
 export const deepseek_provider: Provider = {
@@ -20,6 +32,7 @@ export const deepseek_provider: Provider = {
 
   },
   api: 'anthropic',
+  base_url: 'https://api.deepseek.com/anthropic',
 };
 
 export const localhost_provider: Provider = {
@@ -27,6 +40,7 @@ export const localhost_provider: Provider = {
   website: 'https://localhost',
   default_features: {},
   api: 'anthropic',
+  base_url: 'http://localhost:8080/',
 };
 
 export const togheterai_provider: Provider = {
@@ -34,6 +48,7 @@ export const togheterai_provider: Provider = {
   website: 'https://api.together.ai',
   default_features: {},
   api: 'openai-chat-completion',
+  base_url: 'https://api.together.xyz/v1',
 };
 
 export const openai_provider: Provider = {
@@ -72,6 +87,7 @@ export const openrouter_provider: Provider = {
   website: 'https://openrouter.ai',
   default_features: {},
   api: 'openai-chat-completion',
+  base_url: 'https://openrouter.ai/api/v1',
 };
 
 export const kimi_provider: Provider = {
@@ -79,6 +95,7 @@ export const kimi_provider: Provider = {
   website: 'https://platform.moonshot.ai',
   default_features: {},
   api: 'openai-chat-completion',
+  base_url: 'https://api.moonshot.ai',
 };
 
 export interface Model<T = unknown> {
@@ -137,7 +154,7 @@ export interface Model<T = unknown> {
 // about it
 //
 
-const list = [
+const default_models = [
 
   {
     label: 'Localhost',
@@ -285,16 +302,107 @@ const list = [
 
 ] as const satisfies Model[];
 
-export type ModelName = typeof list[number]['name'];
-export const Models = list;
+/** the built-in providers, by name. see ResolveProvider */
+const builtin_providers: Provider[] = [
+  deepseek_provider, localhost_provider, togheterai_provider, openai_provider,
+  anthropic_provider, gemini_provider, openrouter_provider, kimi_provider,
+];
 
-export function FindModel(name: ModelName) {
-  for (const entry of list) {
-    if (entry.name === name) {
-      return entry;
+/**
+ * fill in connection details for a provider that predates `base_url`.
+ *
+ * apps persist whole Model objects and send them to the worker as-is, so
+ * the worker can see a provider saved before `base_url` existed. back then
+ * the worker routed on the provider name; so if there's no `base_url` and
+ * the name matches a built-in provider, take `api` and `base_url` from that.
+ * anything else (including every provider with a `base_url`) is used as-is.
+ */
+export function ResolveProvider(provider: Provider): Provider {
+  if (provider.base_url === undefined) {
+    const builtin = builtin_providers.find(test => test.name === provider.name);
+    if (builtin) {
+      return { ...provider, api: builtin.api, base_url: builtin.base_url };
     }
   }
-  return undefined;
+  return provider;
 }
 
+// --- registry ---
 
+const FeaturesSchema = v.object({
+  image_support_in_tools: v.optional(v.boolean()),
+  tool_search: v.optional(v.boolean()),
+});
+
+/** validates a provider. unknown properties are kept */
+export const ProviderSchema = v.looseObject({
+  name: v.pipe(v.string(), v.nonEmpty()),
+  website: v.string(),
+  models: v.optional(v.string()),
+  default_features: v.optional(FeaturesSchema, {}),
+  api: v.picklist(['anthropic', 'gemini', 'openai-responses', 'openai-chat-completion']),
+  base_url: v.optional(v.pipe(v.string(), v.url())),
+});
+
+/** validates a model. unknown properties are kept */
+export const ModelSchema = v.looseObject({
+  label: v.string(),
+  name: v.pipe(v.string(), v.nonEmpty()),
+  provider: ProviderSchema,
+  thinking_budget: v.optional(v.boolean()),
+  cost: v.object({
+    input: v.number(),
+    output: v.number(),
+    thoughts: v.optional(v.number()),
+  }),
+  additional_parameters: v.optional(v.unknown()),
+  dev: v.optional(v.boolean()),
+  model_features: v.optional(FeaturesSchema),
+});
+
+/** 
+ * what SetModels accepts: a Model, except `default_features` may be 
+ * omitted. JSON fetched at runtime can be passed straight in.
+ */
+export type ModelInput = v.InferInput<typeof ModelSchema>;
+
+/** 
+ * model names used to be a union of the built-in names. models can now
+ * be supplied at runtime, so this is just a string; kept for existing
+ * imports.
+ */
+export type ModelName = string;
+
+/** the built-in model list. SetModels(DefaultModels) restores it */
+export const DefaultModels: readonly Model[] = default_models;
+
+/**
+ * the current model list. this is a live array: SetModels() replaces its
+ * contents in place, so code that reads `Models` sees the new list. code
+ * that copied from it (e.g. built a provider list) has to rebuild.
+ */
+export const Models: Model[] = [...default_models];
+
+/**
+ * replace the model list, e.g. with a list fetched at runtime. the input
+ * is validated first; if it's invalid, or has duplicate names, this throws
+ * and the current list is unchanged.
+ *
+ * returns the list as stored (with defaults filled in).
+ */
+export function SetModels(models: readonly ModelInput[]): Model[] {
+  const parsed = v.parse(v.array(ModelSchema), models) as Model[];
+  const seen = new Set<string>();
+  for (const model of parsed) {
+    if (seen.has(model.name)) {
+      throw new Error('duplicate model name: ' + model.name);
+    }
+    seen.add(model.name);
+  }
+  Models.splice(0, Models.length, ...parsed);
+  return Models;
+}
+
+export function FindModel(name: ModelName): Model|undefined {
+  return Models.find(entry => entry.name === name);
+}
