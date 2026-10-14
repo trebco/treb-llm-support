@@ -16,7 +16,7 @@ npm run audit        # fails on moderate+ advisories in runtime deps
 
 Uses **npm** (the project moved off bun; don't use bun here). There is no build step -- consumers import directly from `src/index.ts`. No test suite currently.
 
-`llm-support-core` and `@trebco/treb` are `file:` dependencies, which npm symlinks (`install-links` is false), so edits in `../llm-support-core` and `../TREB` show up here directly.
+`llm-support-core` and `@trebco/treb` are `file:` dependencies, which npm symlinks (`install-links` is false), so edits in `../llm-support-core` and `../TREB` show up here directly. Both must be checked out next to this repo (llm-support-core: `git@github.com:trebco/llm-support-core.git`) before `npm install`.
 
 **Consumers' dev servers can miss edits here or in llm-support-core** (stale modules from linked packages). If an edit seems to have no effect, restart the consumer's dev server.
 
