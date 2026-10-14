@@ -1,12 +1,10 @@
 
-import type { ToolCallContent, ToolResultContent } from '../core/chat-message';
-import type { ToolHandlerErrorType, ToolHandlerGenericResposneType, ToolHandlerResponseType } from '../core/tool-result';
+import type { ToolCallContent, ToolResultContent, ToolHandlerErrorType, ToolHandlerGenericResposneType, ToolHandlerResponseType } from 'llm-support-core';
 import type { ToolInputMap, ToolName } from './tools';
 import { tools_map } from './tools';
 import * as v from 'valibot';
 import type { EmbeddedSpreadsheet, CellValue, Color, CellStyle, FontSize, BorderConstants, ConditionalFormatType, ICellAddress, IArea } from '@trebco/treb';
 import { ListAnnotations, SummarizeSpreadsheet, transpose } from './support-functions';
-import { parse as pj_parse } from 'partial-json';
 
 /** this is almost certainly already exposed somewhere in TREB/RAW */
 function IsCellAddress(candidate: ICellAddress|IArea): candidate is ICellAddress {

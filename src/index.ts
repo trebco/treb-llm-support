@@ -1,13 +1,13 @@
 
 //
-// treb-llm-support: the LLM chat core plus the TREB spreadsheet tools.
-// apps with no spreadsheet should import from ./core instead.
+// treb-llm-support: llm-support-core plus the TREB spreadsheet tools.
+// apps with no spreadsheet should use llm-support-core directly.
 //
 
-export * from './core';
+export * from 'llm-support-core';
 export * from './treb';
 
-import { formatConfig } from './core/md';
+import { formatConfig } from 'llm-support-core';
 
 // existing clients expect collapsible code blocks, which the core no 
 // longer defaults to. apps can still set this after import.

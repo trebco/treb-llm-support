@@ -1,5 +1,5 @@
 import * as v from 'valibot';
-import { defineTool, type ToolDefinition } from '../core/tool-definition';
+import { defineTool, type ToolDefinition } from 'llm-support-core';
 
 // --- Schemas ---
 

@@ -1,7 +1,5 @@
 
-import type { ToolCallContent } from '../core/chat-message';
-import type { ToolHandlerResponseType } from '../core/tool-result';
-import { CreateToolExecutor, type ToolHandlerMap } from '../core/tool-executor';
+import { CreateToolExecutor, type ToolCallContent, type ToolHandlerMap, type ToolHandlerResponseType } from 'llm-support-core';
 import type { EmbeddedSpreadsheet } from '@trebco/treb';
 import { tools } from './tools';
 import { type ExternalUI, handlers } from './tool-handlers';

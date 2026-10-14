@@ -1,5 +1,6 @@
 
 // compatibility shim: consumers load the worker from this path
-// (`treb-llm-support/src/llm-worker.ts?worker`). the worker is in core.
+// (`treb-llm-support/src/llm-worker.ts?worker`). the worker is in
+// llm-support-core.
 
-import './core/llm-worker';
+import 'llm-support-core/worker';
